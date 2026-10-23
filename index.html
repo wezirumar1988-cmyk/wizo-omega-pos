@@ -91,12 +91,33 @@ async function salesPage(){
 }
 async function reportsPage(){const [sales,expenses,purchases,prods]=await Promise.all([q("sales"),q("expenses"),q("purchases"),q("products")]);const completed=sales.filter(s=>s.status==="completed");const total=completed.reduce((a,s)=>a+Number(s.total),0),cost=completed.reduce((a,s)=>a+Number(s.cost_total||0),0),exp=expenses.reduce((a,s)=>a+Number(s.amount),0);$("content").innerHTML=`<div class="stats"><div class="stat"><small>COMPLETED SALES</small><strong>${money(total)}</strong></div><div class="stat"><small>SALE COST</small><strong>${money(cost)}</strong></div><div class="stat"><small>GROSS PROFIT</small><strong>${money(total-cost)}</strong></div><div class="stat"><small>AFTER EXPENSES</small><strong>${money(total-cost-exp)}</strong></div></div><div class="layout2"><div class="panel"><h3>Purchases</h3><p class="total">${money(purchases.reduce((a,p)=>a+Number(p.total_cost),0))}</p></div><div class="panel"><h3>Inventory value (at cost)</h3><p class="total">${money(prods.reduce((a,p)=>a+Number(p.stock_quantity)*Number(p.cost_price),0))}</p></div></div><div class="panel"><h3>Sales records</h3>${tableHTML(sales,["invoice_number","total","status","created_at"])}</div>`}
 async function cashierManagementPage(){
- if(!isOwnerRole())throw Error("Owner/Admin only.");
- const {data:members,error}=await db.from("business_members").select("user_id,role,created_at").eq("business_id",business.id).order("created_at",{ascending:true});
- if(error)throw error;
- const rows=members||[];
- $("content").innerHTML=`<div class="panel"><h3>Cashier Management</h3><p class="muted">Accounts already linked to this business are listed below. Creating a new login requires a secure invitation/authentication flow.</p><div class="tablewrap"><table><thead><tr><th>User ID</th><th>Role</th><th>Added</th></tr></thead><tbody>${rows.map(m=>`<tr><td>${esc(m.user_id)}</td><td><span class="chip">${esc(m.role||"cashier")}</span></td><td>${m.created_at?new Date(m.created_at).toLocaleDateString():"—"}</td></tr>`).join("")||`<tr><td colspan="3">No team members found.</td></tr>`}</tbody></table></div><p class="muted" style="margin-top:12px">For security, this page does not create accounts or change roles until the secure Supabase invitation/role function is configured.</p><button class="primary" id="refreshMembers">Refresh list</button></div>`;
- $("refreshMembers").onclick=()=>cashierManagementPage();
+  if(!isOwnerRole())throw Error("Owner/Admin only.");
+  const {data:members,error}=await db.from("business_members").select("user_id,role,created_at").eq("business_id",business.id).order("created_at",{ascending:true});
+  if(error)throw error;
+  const rows=members||[];
+  $("content").innerHTML=`<div class="panel"><div class="row" style="align-items:center"><div><h3>Cashier Management</h3><p class="muted">Invite a cashier to this business. A secure Supabase Edge Function must be deployed for invitations to work.</p></div><button class="primary" id="showAddCashier" style="flex:0 0 auto">＋ Add Cashier</button></div><div id="addCashierBox" class="panel hidden" style="margin:14px 0;background:var(--panel2)"><h3>Invite new cashier</h3><form id="addCashierForm"><label>Cashier email address *</label><input id="cashierEmail" name="email" type="email" required placeholder="cashier@example.com"><p class="muted" style="margin-top:8px">An invitation will be sent by the secure backend. The cashier should use their own email to accept it.</p><div class="row"><button class="primary" type="submit" id="inviteCashierBtn">Send invitation</button><button type="button" id="cancelAddCashier">Cancel</button></div><div id="cashierMsg" class="msg"></div></form></div><div class="tablewrap"><table><thead><tr><th>User ID</th><th>Role</th><th>Added</th></tr></thead><tbody>${rows.map(m=>`<tr><td>${esc(m.user_id)}</td><td><span class="chip">${esc(m.role||"cashier")}</span></td><td>${m.created_at?new Date(m.created_at).toLocaleDateString():"—"}</td></tr>`).join("")||`<tr><td colspan="3">No team members found.</td></tr>`}</tbody></table></div><button id="refreshMembers" style="margin-top:12px">Refresh list</button></div>`;
+  $("showAddCashier").onclick=()=>{$("addCashierBox").classList.remove("hidden");$("cashierEmail").focus()};
+  $("cancelAddCashier").onclick=()=>{$("addCashierBox").classList.add("hidden");say("cashierMsg","")};
+  $("refreshMembers").onclick=()=>cashierManagementPage();
+  $("addCashierForm").onsubmit=async e=>{
+    e.preventDefault();
+    const email=$("cashierEmail").value.trim().toLowerCase(),btn=$("inviteCashierBtn");
+    if(!email){say("cashierMsg","Enter the cashier email address.");return}
+    btn.disabled=true;say("cashierMsg","Sending invitation…");
+    try{
+      const {data,error}=await db.functions.invoke("wizo-invite-cashier",{body:{business_id:business.id,email}});
+      if(error)throw error;
+      if(data?.error)throw Error(data.error);
+      say("cashierMsg",data?.message||"Invitation request completed. Refresh the list after the cashier accepts.");
+      $("cashierEmail").value="";
+      await cashierManagementPage();
+    }catch(err){
+      const message=String(err.message||err);
+      if(/404|not found|function.*not.*found|failed to send a request/i.test(message)){
+        say("cashierMsg","The Add Cashier form is ready, but the secure Supabase Edge Function 'wizo-invite-cashier' is not deployed/configured yet. No account was created. Do not use client-side sign-up to create cashiers.");
+      }else say("cashierMsg","Invitation failed: "+message);
+    }finally{if($("inviteCashierBtn"))$("inviteCashierBtn").disabled=false}
+  };
 }
 async function budgetPage(){
  if(!isOwnerRole())throw Error("Owner/Admin only.");
