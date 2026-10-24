@@ -170,18 +170,40 @@ async function purchasesPage(){
     <div class="panel"><h3>Purchase history</h3>${purchaseHistory}<p id="purchaseHistoryMsg" class="msg"></p></div>`;
   $("content").querySelectorAll("[data-edit-purchase]").forEach(btn=>btn.onclick=async()=>{
     const p=ps.find(x=>String(x.id)===btn.dataset.editPurchase);if(!p)return;
+    const prod=productById.get(String(p.product_id));
+    const currentName=String(p.product_name||prod?.name||"");
+    const currentUnit=String(p.unit||prod?.unit||"kg");
+    const currentSupplier=String(p.supplier_name||supplierById.get(String(p.supplier_id))?.name||"");
+    const name=prompt("Product name",currentName);if(name===null)return;
+    if(!name.trim()){alert("Product name is required.");return}
+    const unitOptions=["kg","gram","liter","ml","piece","box","carton","pack","bag","bottle","can","tray","dozen","quintal","ton","meter","roll","plate","portion"];
+    const unit=prompt("Unit (kg, gram, liter, ml, piece, box, carton, pack, bag, bottle, can, tray, dozen, quintal, ton, meter, roll, plate, portion)",currentUnit);if(unit===null)return;
+    if(!unitOptions.includes(unit.trim().toLowerCase())){alert("Please enter a unit from the list shown.");return}
+    const supplier=prompt("Supplier name",currentSupplier);if(supplier===null)return;
     const qty=prompt("Quantity",String(p.quantity??""));if(qty===null)return;
     const cost=prompt("Unit cost",String(p.unit_cost??p.purchase_cost??""));if(cost===null)return;
     const transport=prompt("Transport cost",String(p.transport_cost??0));if(transport===null)return;
     const loading=prompt("Loading / unloading cost",String(p.loading_cost??0));if(loading===null)return;
-    const nextQty=Number(qty),nextCost=Number(cost),nextTransport=Number(transport),nextLoading=Number(loading);
+    const nextQty=Number(qty),nextCost=Number(cost),nextTransport=Number(transport),nextLoading=Number(loading),oldQty=Number(p.quantity||0);
     if(!(nextQty>0)||![nextCost,nextTransport,nextLoading].every(n=>Number.isFinite(n)&&n>=0)){alert("Please enter valid quantities and costs.");return}
-    const oldQty=Number(p.quantity||0),oldTotal=Number(p.total_cost||0),newTotal=nextQty*nextCost+nextTransport+nextLoading;
+    const newTotal=nextQty*nextCost+nextTransport+nextLoading;
     try{
-      const changes={quantity:nextQty,unit_cost:nextCost,transport_cost:nextTransport,loading_cost:nextLoading,total_cost:newTotal};
+      let supplierId=p.supplier_id||null;
+      const supplierName=supplier.trim();
+      if(supplierName){
+        const {data:found,error:findErr}=await db.from("suppliers").select("id,name").eq("business_id",business.id).ilike("name",supplierName).limit(1);
+        if(findErr)throw findErr;
+        if(found?.length)supplierId=found[0].id;
+        else {const {data:created,error:createErr}=await db.from("suppliers").insert({business_id:business.id,name:supplierName}).select("id").single();if(createErr)throw createErr;supplierId=created.id;}
+      }else supplierId=null;
+      const changes={product_name:name.trim(),unit:unit.trim().toLowerCase(),quantity:nextQty,unit_cost:nextCost,transport_cost:nextTransport,loading_cost:nextLoading,total_cost:newTotal,supplier_id:supplierId,supplier_name:supplierName||null};
       const {error}=await db.from("purchases").update(changes).eq("id",p.id).eq("business_id",business.id);if(error)throw error;
-      if(p.product_id&&nextQty!==oldQty){const prod=productById.get(String(p.product_id));if(prod){const {error:stockError}=await db.from("products").update({stock_quantity:Math.max(0,Number(prod.stock_quantity||0)+(nextQty-oldQty))}).eq("id",p.product_id).eq("business_id",business.id);if(stockError)throw stockError}}
-      await purchasesPage();say("purchaseHistoryMsg","Purchase updated.");
+      if(p.product_id&&prod){
+        const productChanges={name:name.trim(),unit:unit.trim().toLowerCase(),cost_price:nextCost};
+        const {error:productError}=await db.from("products").update(productChanges).eq("id",p.product_id).eq("business_id",business.id);if(productError)throw productError;
+        if(nextQty!==oldQty){const {error:stockError}=await db.from("products").update({stock_quantity:Math.max(0,Number(prod.stock_quantity||0)+(nextQty-oldQty))}).eq("id",p.product_id).eq("business_id",business.id);if(stockError)throw stockError}
+      }
+      await purchasesPage();say("purchaseHistoryMsg","Purchase details updated.");
     }catch(err){alert("Could not edit purchase: "+(err.message||err))}
   });
   $("content").querySelectorAll("[data-delete-purchase]").forEach(btn=>btn.onclick=async()=>{
