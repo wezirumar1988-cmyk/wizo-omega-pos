@@ -148,7 +148,7 @@ async function purchasesPage(){
   const [ps,prods,suppliers]=await Promise.all([q("purchases"),getProducts(),q("suppliers")]);
   const productById=new Map(prods.map(x=>[String(x.id),x]));
   const supplierById=new Map(suppliers.map(x=>[String(x.id),x]));
-  const purchaseHistory=ps.length?`<div class="tablewrap"><table><thead><tr><th>Purchase No.</th><th>Product</th><th>Unit</th><th>Quantity</th><th>Supplier</th><th>Unit cost</th><th>Total cost</th><th>Date</th><th>Actions</th></tr></thead><tbody>${ps.map(p=>{const prod=productById.get(String(p.product_id));const supp=supplierById.get(String(p.supplier_id));return `<tr><td>${esc(p.purchase_number||p.id||"—")}</td><td>${esc(p.product_name||prod?.name||p.name||"—")}</td><td>${esc(p.unit||prod?.unit||p.product_unit||"—")}</td><td>${esc(p.quantity??p.qty??p.purchase_quantity??"—")}</td><td>${esc(p.supplier_name||supp?.name||"—")}</td><td>${money(p.unit_cost??p.purchase_cost??p.cost_per_unit??0)}</td><td>${money(p.total_cost??p.total??0)}</td><td>${p.created_at?new Date(p.created_at).toLocaleString():"—"}</td><td><div class="row" style="min-width:120px"><button type="button" data-edit-purchase="${esc(p.id)}">Edit</button><button type="button" class="danger" data-delete-purchase="${esc(p.id)}">Delete</button></div></td></tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No records yet.</div>';
+  const purchaseHistory=ps.length?`<div class="tablewrap"><table><thead><tr><th>Purchase No.</th><th>Product</th><th>Unit</th><th>Quantity</th><th>Supplier</th><th>Unit cost</th><th>Total cost</th><th>Date</th><th>Actions</th></tr></thead><tbody>${ps.map(p=>{const prod=productById.get(String(p.product_id));const supp=supplierById.get(String(p.supplier_id));return `<tr><td>${esc(p.purchase_number||p.id||"—")}</td><td>${esc(p.product_name||prod?.name||"—")}</td><td>${esc(p.unit||prod?.unit||"—")}</td><td>${esc(p.quantity??"—")}</td><td>${esc(p.supplier_name||supp?.name||"—")}</td><td>${money(p.unit_cost??p.purchase_cost??0)}</td><td>${money(p.total_cost??0)}</td><td>${p.created_at?new Date(p.created_at).toLocaleString():"—"}</td><td><div class="row" style="min-width:120px"><button type="button" data-edit-purchase="${esc(p.id)}">Edit</button><button type="button" class="danger" data-delete-purchase="${esc(p.id)}">Delete</button></div></td></tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No records yet.</div>';
   $("content").innerHTML=`<div class="panel"><h3>Record purchase</h3>
     <form id="purchaseForm">
       <div class="formgrid">
@@ -171,8 +171,8 @@ async function purchasesPage(){
   $("content").querySelectorAll("[data-edit-purchase]").forEach(btn=>btn.onclick=async()=>{
     const p=ps.find(x=>String(x.id)===btn.dataset.editPurchase);if(!p)return;
     const prod=productById.get(String(p.product_id));
-    const currentName=String(p.product_name||prod?.name||p.name||"");
-    const currentUnit=String(p.unit||prod?.unit||p.product_unit||"kg");
+    const currentName=String(p.product_name||prod?.name||"");
+    const currentUnit=String(p.unit||prod?.unit||"kg");
     const currentSupplier=String(p.supplier_name||supplierById.get(String(p.supplier_id))?.name||"");
     const name=prompt("Product name",currentName);if(name===null)return;
     if(!name.trim()){alert("Product name is required.");return}
@@ -180,8 +180,8 @@ async function purchasesPage(){
     const unit=prompt("Unit (kg, gram, liter, ml, piece, box, carton, pack, bag, bottle, can, tray, dozen, quintal, ton, meter, roll, plate, portion)",currentUnit);if(unit===null)return;
     if(!unitOptions.includes(unit.trim().toLowerCase())){alert("Please enter a unit from the list shown.");return}
     const supplier=prompt("Supplier name",currentSupplier);if(supplier===null)return;
-    const qty=prompt("Quantity",String(p.quantity??p.qty??p.purchase_quantity??""));if(qty===null)return;
-    const cost=prompt("Unit cost",String(p.unit_cost??p.purchase_cost??p.cost_per_unit??""));if(cost===null)return;
+    const qty=prompt("Quantity",String(p.quantity??""));if(qty===null)return;
+    const cost=prompt("Unit cost",String(p.unit_cost??p.purchase_cost??""));if(cost===null)return;
     const transport=prompt("Transport cost",String(p.transport_cost??0));if(transport===null)return;
     const loading=prompt("Loading / unloading cost",String(p.loading_cost??0));if(loading===null)return;
     const nextQty=Number(qty),nextCost=Number(cost),nextTransport=Number(transport),nextLoading=Number(loading),oldQty=Number(p.quantity||0);
@@ -196,22 +196,13 @@ async function purchasesPage(){
         if(found?.length)supplierId=found[0].id;
         else {const {data:created,error:createErr}=await db.from("suppliers").insert({business_id:business.id,name:supplierName}).select("id").single();if(createErr)throw createErr;supplierId=created.id;}
       }else supplierId=null;
-      let linkedProduct=prod||null;
-      if(!linkedProduct){
-        const {data:matches,error:matchError}=await db.from("products").select("id,name,unit,stock_quantity,cost_price").eq("business_id",business.id).ilike("name",name.trim()).limit(1);
-        if(matchError)throw matchError;
-        linkedProduct=matches?.[0]||null;
-      }
-      if(!linkedProduct){
-        const {data:createdProduct,error:createProductError}=await db.from("products").insert({business_id:business.id,name:name.trim(),unit:unit.trim().toLowerCase(),stock_quantity:0,cost_price:nextCost,selling_price:0,low_stock_threshold:0}).select("id,name,unit,stock_quantity,cost_price").single();
-        if(createProductError)throw createProductError;
-        linkedProduct=createdProduct;
-      }
-      const changes={product_id:linkedProduct.id,product_name:name.trim(),unit:unit.trim().toLowerCase(),quantity:nextQty,unit_cost:nextCost,transport_cost:nextTransport,loading_cost:nextLoading,total_cost:newTotal,supplier_id:supplierId,supplier_name:supplierName||null};
+      const changes={product_name:name.trim(),unit:unit.trim().toLowerCase(),quantity:nextQty,unit_cost:nextCost,transport_cost:nextTransport,loading_cost:nextLoading,total_cost:newTotal,supplier_id:supplierId,supplier_name:supplierName||null};
       const {error}=await db.from("purchases").update(changes).eq("id",p.id).eq("business_id",business.id);if(error)throw error;
-      const productChanges={name:name.trim(),unit:unit.trim().toLowerCase(),cost_price:nextCost};
-      const {error:productError}=await db.from("products").update(productChanges).eq("id",linkedProduct.id).eq("business_id",business.id);if(productError)throw productError;
-      if(nextQty!==oldQty){const {error:stockError}=await db.from("products").update({stock_quantity:Math.max(0,Number(linkedProduct.stock_quantity||0)+(nextQty-oldQty))}).eq("id",linkedProduct.id).eq("business_id",business.id);if(stockError)throw stockError}
+      if(p.product_id&&prod){
+        const productChanges={name:name.trim(),unit:unit.trim().toLowerCase(),cost_price:nextCost};
+        const {error:productError}=await db.from("products").update(productChanges).eq("id",p.product_id).eq("business_id",business.id);if(productError)throw productError;
+        if(nextQty!==oldQty){const {error:stockError}=await db.from("products").update({stock_quantity:Math.max(0,Number(prod.stock_quantity||0)+(nextQty-oldQty))}).eq("id",p.product_id).eq("business_id",business.id);if(stockError)throw stockError}
+      }
       await purchasesPage();say("purchaseHistoryMsg","Purchase details updated.");
     }catch(err){alert("Could not edit purchase: "+(err.message||err))}
   });
@@ -255,15 +246,8 @@ async function purchasesPage(){
           if(existingSuppliers&&existingSuppliers.length)supplierId=existingSuppliers[0].id;
           else {const {data:newSupplier,error:newSupplierError}=await db.from("suppliers").insert({business_id:business.id,name:supplierName}).select("id").single();if(newSupplierError)throw newSupplierError;supplierId=newSupplier.id;}
         }
-        const quantity=Number(f.get("quantity")),unitCost=Number(f.get("unit_cost")),transportCost=Number(f.get("transport_cost")||0),loadingCost=Number(f.get("loading_cost")||0);
-        if(!(quantity>0)||![unitCost,transportCost,loadingCost].every(n=>Number.isFinite(n)&&n>=0))throw new Error("Enter a valid quantity and costs.");
-        const totalCost=quantity*unitCost+transportCost+loadingCost;
-        const purchaseRow={business_id:business.id,purchase_number:`PUR-${Date.now()}`,product_id:product.id,product_name:productName,unit:String(f.get("unit")||product.unit||"piece").trim().toLowerCase(),quantity,unit_cost:unitCost,transport_cost:transportCost,loading_cost:loadingCost,total_cost:totalCost,supplier_id:supplierId,supplier_name:supplierName||null};
-        const {error:purchaseError}=await db.from("purchases").insert(purchaseRow);
-        if(purchaseError)throw purchaseError;
-        const {error:stockError}=await db.from("products").update({unit:purchaseRow.unit,cost_price:unitCost,stock_quantity:Number(product.stock_quantity||0)+quantity}).eq("id",product.id).eq("business_id",business.id);
-        if(stockError)throw stockError;
-        say("purchaseMsg","Purchase saved successfully.");await purchasesPage()
+        const {data,error}=await db.rpc("wizo_record_purchase",{p_business_id:business.id,p_product_id:product.id,p_quantity:Number(f.get("quantity")),p_unit_cost:Number(f.get("unit_cost")),p_supplier_id:supplierId,p_transport_cost:Number(f.get("transport_cost")||0),p_loading_cost:Number(f.get("loading_cost")||0)});
+        if(error)throw error;say("purchaseMsg","Purchase saved.");await purchasesPage()
       }
     }catch(err){say("purchaseMsg",err.message)}
   }
