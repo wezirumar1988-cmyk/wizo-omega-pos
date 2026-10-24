@@ -255,8 +255,15 @@ async function purchasesPage(){
           if(existingSuppliers&&existingSuppliers.length)supplierId=existingSuppliers[0].id;
           else {const {data:newSupplier,error:newSupplierError}=await db.from("suppliers").insert({business_id:business.id,name:supplierName}).select("id").single();if(newSupplierError)throw newSupplierError;supplierId=newSupplier.id;}
         }
-        const {data,error}=await db.rpc("wizo_record_purchase",{p_business_id:business.id,p_product_id:product.id,p_quantity:Number(f.get("quantity")),p_unit_cost:Number(f.get("unit_cost")),p_supplier_id:supplierId,p_transport_cost:Number(f.get("transport_cost")||0),p_loading_cost:Number(f.get("loading_cost")||0)});
-        if(error)throw error;say("purchaseMsg","Purchase saved.");await purchasesPage()
+        const quantity=Number(f.get("quantity")),unitCost=Number(f.get("unit_cost")),transportCost=Number(f.get("transport_cost")||0),loadingCost=Number(f.get("loading_cost")||0);
+        if(!(quantity>0)||![unitCost,transportCost,loadingCost].every(n=>Number.isFinite(n)&&n>=0))throw new Error("Enter a valid quantity and costs.");
+        const totalCost=quantity*unitCost+transportCost+loadingCost;
+        const purchaseRow={business_id:business.id,purchase_number:`PUR-${Date.now()}`,product_id:product.id,product_name:productName,unit:String(f.get("unit")||product.unit||"piece").trim().toLowerCase(),quantity,unit_cost:unitCost,transport_cost:transportCost,loading_cost:loadingCost,total_cost:totalCost,supplier_id:supplierId,supplier_name:supplierName||null};
+        const {error:purchaseError}=await db.from("purchases").insert(purchaseRow);
+        if(purchaseError)throw purchaseError;
+        const {error:stockError}=await db.from("products").update({unit:purchaseRow.unit,cost_price:unitCost,stock_quantity:Number(product.stock_quantity||0)+quantity}).eq("id",product.id).eq("business_id",business.id);
+        if(stockError)throw stockError;
+        say("purchaseMsg","Purchase saved successfully.");await purchasesPage()
       }
     }catch(err){say("purchaseMsg",err.message)}
   }
