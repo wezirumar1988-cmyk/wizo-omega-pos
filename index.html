@@ -176,15 +176,26 @@ async function purchasesPage(){
         <div><label>Transport cost</label><input name="transport_cost" type="number" min="0" step=".01" value="0"></div>
         <div><label>Loading / unloading</label><input name="loading_cost" type="number" min="0" step=".01" value="0"></div>
       </div>
-      <button class="primary" style="margin-top:15px">Save purchase & update stock</button><span id="purchaseMsg" class="msg"></span>
+      <div style="margin-top:12px"><label><input type="checkbox" id="purchaseNoStock" style="width:auto"> Record purchase without adding stock</label><p class="muted">Use this when recording a direct purchase that should not change inventory. Normal purchases still update stock.</p></div>
+      <button class="primary" style="margin-top:15px">Save purchase</button><span id="purchaseMsg" class="msg"></span>
     </form></div>
     <div class="panel"><h3>Purchase history</h3>${tableHTML(ps,["purchase_number","total_cost","created_at"])}</div>`;
   $("toggleNewPurchaseProduct").onclick=()=>showPage("AddProduct");
   $("purchaseForm").onsubmit=async e=>{
     e.preventDefault();const f=new FormData(e.currentTarget);
     try{
-      const {data,error}=await db.rpc("wizo_record_purchase",{p_business_id:business.id,p_product_id:f.get("product_id"),p_quantity:Number(f.get("quantity")),p_unit_cost:Number(f.get("unit_cost")),p_supplier_id:f.get("supplier_id")||null,p_transport_cost:Number(f.get("transport_cost")||0),p_loading_cost:Number(f.get("loading_cost")||0)});
-      if(error)throw error;say("purchaseMsg","Purchase saved and stock updated.");await purchasesPage()
+      if($("purchaseNoStock").checked){
+        const qty=Number(f.get("quantity")), unitCost=Number(f.get("unit_cost"));
+        if(!(qty>0)||unitCost<0)throw new Error("Enter a valid quantity and unit cost.");
+        const total=qty*unitCost+Number(f.get("transport_cost")||0)+Number(f.get("loading_cost")||0);
+        const productName=prods.find(p=>String(p.id)===String(f.get("product_id")))?.name||"Product";
+        const {error}=await db.from("expenses").insert({business_id:business.id,description:"Direct purchase (no stock): "+productName,amount:total,category:"Direct purchase"});
+        if(error)throw error;
+        say("purchaseMsg","Direct purchase recorded without changing stock.");await purchasesPage();
+      }else{
+        const {data,error}=await db.rpc("wizo_record_purchase",{p_business_id:business.id,p_product_id:f.get("product_id"),p_quantity:Number(f.get("quantity")),p_unit_cost:Number(f.get("unit_cost")),p_supplier_id:f.get("supplier_id")||null,p_transport_cost:Number(f.get("transport_cost")||0),p_loading_cost:Number(f.get("loading_cost")||0)});
+        if(error)throw error;say("purchaseMsg","Purchase saved and stock updated.");await purchasesPage()
+      }
     }catch(err){say("purchaseMsg",err.message)}
   }
 }
