@@ -143,26 +143,40 @@ function paintCart(){if(!$("cartItems"))return;$("cartItems").innerHTML=cart.map
 async function checkout(){if(!cart.length){say("saleMsg","Add at least one item.");return}if(cart.some(x=>x.menu_only)){say("saleMsg","Menu pictures and prices now appear in POS. Saving menu-only items as sales needs a Supabase checkout update; no sale was saved. Stock products can still be sold as before.");return}const btn=$("payBtn");btn.disabled=true;say("saleMsg","Saving sale…");try{const discount=Math.max(0,Number($("discount").value||0));const payload={p_business_id:business.id,p_invoice_number:"INV-"+Date.now(),p_payment_method:$("payment").value,p_discount:discount,p_customer_name:$("saleCustomer").value.trim()||null,p_table_label:$("tableNo").value.trim()||null,p_items:cart.map(x=>({product_id:x.product_id,quantity:x.quantity}))};const {data,error}=await db.rpc("wizo_checkout",payload);if(error)throw error;const sale=Array.isArray(data)?data[0]:data;const items=cart.map(x=>({...x}));cart=[];say("saleMsg","Sale saved. Invoice: "+(sale?.invoice_number||payload.p_invoice_number));showReceipt(sale||{invoice_number:payload.p_invoice_number,total:items.reduce((a,x)=>a+x.quantity*x.unit_price,0)-discount},items);await loadBusiness();await renderPOS()}catch(err){say("saleMsg",err.message||"Sale failed")}finally{if($("payBtn"))$("payBtn").disabled=false}}
 function showReceipt(sale,items){const el=$("printArea");const subtotal=items.reduce((sum,x)=>sum+(Number(x.quantity)||0)*(Number(x.unit_price)||0),0);const total=Number(sale.total??(subtotal-Math.max(0,Number($("discount")?.value||0))));const discount=Math.max(0,subtotal-total);const payment=$("payment")?.value||sale.payment_method||"Cash";const createdAt=new Date();el.className="receipt";el.innerHTML=`<div class="receipt-brand"><h2>${esc(profile.name||"WIZO OMEGA POS")}</h2>${profile.address?`<p>${esc(profile.address)}</p>`:""}${profile.phone?`<p>Tel: ${esc(profile.phone)}</p>`:""}<p>SALES RECEIPT</p></div><div class="receipt-meta"><div><span>Invoice</span><strong>${esc(sale.invoice_number||"")}</strong></div><div><span>Date</span><strong>${createdAt.toLocaleDateString()}</strong></div><div><span>Time</span><strong>${createdAt.toLocaleTimeString()}</strong></div>${$("saleCustomer")?.value.trim()?`<div><span>Customer</span><strong>${esc($("saleCustomer").value.trim())}</strong></div>`:""}${$("tableNo")?.value.trim()?`<div><span>Table / Order</span><strong>${esc($("tableNo").value.trim())}</strong></div>`:""}<div><span>Payment</span><strong>${esc(payment)}</strong></div></div><table class="receipt-items"><thead><tr><th>Item</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${items.map(x=>`<tr><td>${esc(x.product_name||"Item")}<br><small>${money(x.unit_price)} each</small></td><td>${Number(x.quantity)||0}</td><td>${money((Number(x.quantity)||0)*(Number(x.unit_price)||0))}</td></tr>`).join("")}</tbody></table><div class="receipt-totals"><div><span>Subtotal</span><strong>${money(subtotal)}</strong></div>${discount>0?`<div><span>Discount</span><strong>− ${money(discount)}</strong></div>`:""}<div class="grand"><span>TOTAL</span><strong>${money(total)}</strong></div></div><div class="receipt-thanks"><strong>Thank you for your visit!</strong><p style="margin:4px 0 0">We hope to see you again.</p></div><button class="receipt-print" onclick="window.print()">Print receipt</button>`;setTimeout(()=>{const w=window.open("","_blank","width=420,height=700");if(w){w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${esc(sale.invoice_number||"")}</title><style>*{box-sizing:border-box}body{margin:0;padding:12px;background:#fff;color:#17211b;font:12px/1.45 Arial,Helvetica,sans-serif}.receipt{width:100%;max-width:360px;margin:0 auto;padding:18px}.receipt-brand{text-align:center;border-bottom:1px dashed #9ca3af;padding-bottom:12px;margin-bottom:12px}.receipt-brand h2{font-size:20px;margin:0 0 5px;overflow-wrap:anywhere}.receipt-brand p{margin:2px 0;color:#4b5563}.receipt-meta{display:grid;gap:4px;margin:10px 0}.receipt-meta div{display:flex;justify-content:space-between;gap:12px}.receipt-meta span:first-child{color:#6b7280}.receipt-items{width:100%;border-collapse:collapse;margin:10px 0}.receipt-items th{font-size:10px;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #d1d5db;padding:6px 2px}.receipt-items td{padding:8px 2px;border-bottom:1px dashed #e5e7eb;white-space:normal}.receipt-items th:last-child,.receipt-items td:last-child{text-align:right}.receipt-totals{border-top:1px dashed #9ca3af;padding-top:9px;margin-top:8px}.receipt-totals div{display:flex;justify-content:space-between;gap:12px;padding:3px 0}.receipt-totals .grand{font-size:17px;font-weight:800;border-top:1px solid #d1d5db;margin-top:5px;padding-top:9px}.receipt-thanks{text-align:center;border-top:1px dashed #9ca3af;margin-top:14px;padding-top:12px;color:#374151}small{color:#6b7280}@page{size:80mm auto;margin:4mm}@media print{body{padding:0}.receipt{max-width:none;padding:0}}</style></head><body>${el.innerHTML}</body></html>`);w.document.close();w.focus();setTimeout(()=>{w.print()},250)}},100)}
 async function addProductPage(){
-  $("content").innerHTML=`<div class="panel"><h3>Add New Stock Product</h3>
+  const suppliers=await q("suppliers");
+  $("content").innerHTML=`<div class="panel"><h3>Add New Product & Record Purchase</h3>
+    <p class="muted">Enter the new product and the quantity you bought here. Saving records the product and purchase, then updates stock.</p>
     <form id="addProductForm"><div class="formgrid">
       <div><label>Product name *</label><input name="name" required placeholder="e.g. Water"></div>
       <div><label>SKU / Barcode (optional)</label><input name="sku" placeholder="Barcode"></div>
       <div><label>Category (optional)</label><input name="category" placeholder="e.g. Drinks"></div>
       <div><label>Unit *</label><select name="unit" required><option value="piece">Piece</option><option value="kg">kg</option><option value="gram">Gram</option><option value="liter">Liter</option><option value="box">Box</option><option value="carton">Carton</option></select></div>
-      <div><label>Default purchase cost</label><input name="cost_price" type="number" min="0" step=".01" value="0"></div>
+      <div><label>Quantity bought *</label><input name="quantity" type="number" min=".001" step=".001" required placeholder="e.g. 20"></div>
+      <div><label>Purchase cost per unit *</label><input name="unit_cost" type="number" min="0" step=".01" required placeholder="0.00"></div>
+      <div><label>Transport cost</label><input name="transport_cost" type="number" min="0" step=".01" value="0"></div>
+      <div><label>Loading / unloading</label><input name="loading_cost" type="number" min="0" step=".01" value="0"></div>
+      <div><label>Supplier (optional)</label><select name="supplier_id"><option value="">None</option>${suppliers.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select></div>
       <div><label>Low stock alert at</label><input name="low_stock_threshold" type="number" min="0" step=".001" value="0"></div>
-    </div><button class="primary" style="margin-top:15px">Save new product</button><span id="addProductMsg" class="msg"></span></form></div>`;
+    </div><button id="saveProductPurchaseBtn" class="primary" style="margin-top:15px" type="submit">Save Product & Purchase</button> <button type="button" id="cancelProductPurchaseBtn">Cancel</button><span id="addProductMsg" class="msg"></span></form></div>`;
+  $("cancelProductPurchaseBtn").onclick=()=>showPage("Purchases");
   $("addProductForm").onsubmit=async e=>{
     e.preventDefault();
-    const form=e.currentTarget;
-    const f=new FormData(form);
-    const row={business_id:business.id,name:String(f.get("name")).trim(),sku:String(f.get("sku")||"").trim()||null,category:String(f.get("category")||"").trim()||null,unit:String(f.get("unit")),stock_quantity:0,cost_price:Math.max(0,Number(f.get("cost_price"))||0),selling_price:0,low_stock_threshold:Math.max(0,Number(f.get("low_stock_threshold"))||0)};
+    const form=e.currentTarget,btn=$("saveProductPurchaseBtn"),f=new FormData(form);
+    const name=String(f.get("name")||"").trim(),qty=Number(f.get("quantity")),unitCost=Number(f.get("unit_cost")),transport=Number(f.get("transport_cost")||0),loading=Number(f.get("loading_cost")||0);
+    if(!name||!Number.isFinite(qty)||qty<=0||!Number.isFinite(unitCost)||unitCost<0||transport<0||loading<0){say("addProductMsg","Check product name, quantity and purchase costs.");return}
+    btn.disabled=true;say("addProductMsg","Saving product and purchase…");
+    let createdProductId=null;
     try{
-      const {error}=await db.from("products").insert(row);
-      if(error)throw error;
-      say("addProductMsg","Product added. Go to Purchases to record the quantity received.");
-      form.reset();
-    }catch(err){say("addProductMsg",err.message||"Could not add product.")}
+      const row={business_id:business.id,name,sku:String(f.get("sku")||"").trim()||null,category:String(f.get("category")||"").trim()||null,unit:String(f.get("unit")),stock_quantity:0,cost_price:unitCost,selling_price:0,low_stock_threshold:Math.max(0,Number(f.get("low_stock_threshold")||0))};
+      const {data:created,error:createError}=await db.from("products").insert(row).select("id").single();
+      if(createError)throw createError;
+      createdProductId=created.id;
+      const {error:purchaseError}=await db.rpc("wizo_record_purchase",{p_business_id:business.id,p_product_id:createdProductId,p_quantity:qty,p_unit_cost:unitCost,p_supplier_id:f.get("supplier_id")||null,p_transport_cost:transport,p_loading_cost:loading});
+      if(purchaseError)throw new Error("Product was created, but purchase/stock update failed: "+purchaseError.message+". The product may remain with zero stock. Do not submit again before checking Purchases.");
+      showNotice("Product and purchase saved. Stock has been updated.");
+      await showPage("Purchases");
+    }catch(err){say("addProductMsg",err.message||"Could not save product and purchase.");}
+    finally{if($("saveProductPurchaseBtn"))$("saveProductPurchaseBtn").disabled=false}
   };
 }
 async function purchasesPage(){
