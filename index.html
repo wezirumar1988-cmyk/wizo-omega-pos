@@ -167,45 +167,35 @@ async function purchasesPage(){
       <div style="margin-top:12px"><label><input type="checkbox" id="purchaseNoStock" style="width:auto"> Record purchase without adding stock</label><p class="muted">Use this for a purchase expense that should not update product quantities.</p></div>
       <button class="primary" style="margin-top:15px">Save purchase</button><span id="purchaseMsg" class="msg"></span>
     </form></div>
-    <div class="panel"><h3>Purchase history</h3>${purchaseHistory}<p id="purchaseHistoryMsg" class="msg"></p></div>`;
-  $("content").querySelectorAll("[data-edit-purchase]").forEach(btn=>btn.onclick=async()=>{
+    <div class="panel"><h3>Purchase history</h3>${purchaseHistory}<p id="purchaseHistoryMsg" class="msg"></p></div>
+    <div id="purchaseEditPanel" class="panel hidden"><h3>✎ Edit purchase details</h3><p class="muted">Edit all purchase fields below, then save once.</p><form id="purchaseEditForm"><input type="hidden" name="id"><div class="formgrid"><div><label>Product name *</label><input name="product_name" required></div><div><label>Supplier name</label><input name="supplier_name"></div><div><label>Unit *</label><select name="unit" required><option value="kg">Kilogram (kg)</option><option value="gram">Gram (g)</option><option value="liter">Liter (L)</option><option value="ml">Milliliter (ml)</option><option value="piece">Piece</option><option value="box">Box</option><option value="carton">Carton</option><option value="pack">Pack</option><option value="bag">Bag</option><option value="bottle">Bottle</option><option value="can">Can</option><option value="tray">Tray</option><option value="dozen">Dozen</option><option value="quintal">Quintal</option><option value="ton">Ton</option><option value="meter">Meter</option><option value="roll">Roll</option><option value="plate">Plate</option><option value="portion">Portion</option></select></div><div><label>Quantity *</label><input name="quantity" type="number" min=".001" step=".001" required></div><div><label>Unit cost *</label><input name="unit_cost" type="number" min="0" step=".01" required></div><div><label>Transport cost</label><input name="transport_cost" type="number" min="0" step=".01" value="0" required></div><div><label>Loading / unloading cost</label><input name="loading_cost" type="number" min="0" step=".01" value="0" required></div></div><p style="margin-top:12px">Calculated total: <strong id="purchaseEditTotal" class="total">ETB 0.00</strong></p><button class="primary" type="submit" id="purchaseEditSave">Save changes</button> <button type="button" id="purchaseEditCancel">Cancel</button><span id="purchaseEditMsg" class="msg"></span></form></div>`;
+  const editPanel=$("purchaseEditPanel"),editForm=$("purchaseEditForm");
+  const updateEditTotal=()=>{const f=new FormData(editForm);const total=Math.max(0,Number(f.get("quantity")||0))*Math.max(0,Number(f.get("unit_cost")||0))+Math.max(0,Number(f.get("transport_cost")||0))+Math.max(0,Number(f.get("loading_cost")||0));$("purchaseEditTotal").textContent=money(total)};
+  ["quantity","unit_cost","transport_cost","loading_cost"].forEach(n=>editForm.elements[n].addEventListener("input",updateEditTotal));
+  $("purchaseEditCancel").onclick=()=>{editPanel.classList.add("hidden");say("purchaseEditMsg","")};
+  $("content").querySelectorAll("[data-edit-purchase]").forEach(btn=>btn.onclick=()=>{
     const p=ps.find(x=>String(x.id)===btn.dataset.editPurchase);if(!p)return;
-    const prod=productById.get(String(p.product_id));
-    const currentName=String(p.product_name||prod?.name||"");
-    const currentUnit=String(p.unit||prod?.unit||"kg");
-    const currentSupplier=String(p.supplier_name||supplierById.get(String(p.supplier_id))?.name||"");
-    const name=prompt("Product name",currentName);if(name===null)return;
-    if(!name.trim()){alert("Product name is required.");return}
-    const unitOptions=["kg","gram","liter","ml","piece","box","carton","pack","bag","bottle","can","tray","dozen","quintal","ton","meter","roll","plate","portion"];
-    const unit=prompt("Unit (kg, gram, liter, ml, piece, box, carton, pack, bag, bottle, can, tray, dozen, quintal, ton, meter, roll, plate, portion)",currentUnit);if(unit===null)return;
-    if(!unitOptions.includes(unit.trim().toLowerCase())){alert("Please enter a unit from the list shown.");return}
-    const supplier=prompt("Supplier name",currentSupplier);if(supplier===null)return;
-    const qty=prompt("Quantity",String(p.quantity??""));if(qty===null)return;
-    const cost=prompt("Unit cost",String(p.unit_cost??p.purchase_cost??""));if(cost===null)return;
-    const transport=prompt("Transport cost",String(p.transport_cost??0));if(transport===null)return;
-    const loading=prompt("Loading / unloading cost",String(p.loading_cost??0));if(loading===null)return;
-    const nextQty=Number(qty),nextCost=Number(cost),nextTransport=Number(transport),nextLoading=Number(loading),oldQty=Number(p.quantity||0);
-    if(!(nextQty>0)||![nextCost,nextTransport,nextLoading].every(n=>Number.isFinite(n)&&n>=0)){alert("Please enter valid quantities and costs.");return}
-    const newTotal=nextQty*nextCost+nextTransport+nextLoading;
-    try{
-      let supplierId=p.supplier_id||null;
-      const supplierName=supplier.trim();
-      if(supplierName){
-        const {data:found,error:findErr}=await db.from("suppliers").select("id,name").eq("business_id",business.id).ilike("name",supplierName).limit(1);
-        if(findErr)throw findErr;
-        if(found?.length)supplierId=found[0].id;
-        else {const {data:created,error:createErr}=await db.from("suppliers").insert({business_id:business.id,name:supplierName}).select("id").single();if(createErr)throw createErr;supplierId=created.id;}
-      }else supplierId=null;
-      const changes={product_name:name.trim(),unit:unit.trim().toLowerCase(),quantity:nextQty,unit_cost:nextCost,transport_cost:nextTransport,loading_cost:nextLoading,total_cost:newTotal,supplier_id:supplierId,supplier_name:supplierName||null};
-      const {error}=await db.from("purchases").update(changes).eq("id",p.id).eq("business_id",business.id);if(error)throw error;
-      if(p.product_id&&prod){
-        const productChanges={name:name.trim(),unit:unit.trim().toLowerCase(),cost_price:nextCost};
-        const {error:productError}=await db.from("products").update(productChanges).eq("id",p.product_id).eq("business_id",business.id);if(productError)throw productError;
-        if(nextQty!==oldQty){const {error:stockError}=await db.from("products").update({stock_quantity:Math.max(0,Number(prod.stock_quantity||0)+(nextQty-oldQty))}).eq("id",p.product_id).eq("business_id",business.id);if(stockError)throw stockError}
-      }
-      await purchasesPage();say("purchaseHistoryMsg","Purchase details updated.");
-    }catch(err){alert("Could not edit purchase: "+(err.message||err))}
+    const prod=productById.get(String(p.product_id));const f=editForm;
+    f.elements.id.value=p.id;f.elements.product_name.value=String(p.product_name||prod?.name||"");f.elements.unit.value=String(p.unit||prod?.unit||"kg").toLowerCase();
+    if(!Array.from(f.elements.unit.options).some(o=>o.value===f.elements.unit.value)){const opt=document.createElement("option");opt.value=f.elements.unit.value;opt.textContent=f.elements.unit.value;f.elements.unit.appendChild(opt)}
+    f.elements.supplier_name.value=String(p.supplier_name||supplierById.get(String(p.supplier_id))?.name||"");f.elements.quantity.value=Number(p.quantity??0);f.elements.unit_cost.value=Number(p.unit_cost??p.purchase_cost??0);f.elements.transport_cost.value=Number(p.transport_cost??0);f.elements.loading_cost.value=Number(p.loading_cost??0);
+    editPanel.dataset.productId=p.product_id||"";editPanel.dataset.oldQty=String(Number(p.quantity||0));updateEditTotal();say("purchaseEditMsg","");editPanel.classList.remove("hidden");editPanel.scrollIntoView({behavior:"smooth",block:"start"});
   });
+  editForm.onsubmit=async e=>{
+    e.preventDefault();const f=new FormData(editForm),p=ps.find(x=>String(x.id)===String(f.get("id")));if(!p)return;
+    const prod=productById.get(String(p.product_id));const name=String(f.get("product_name")||"").trim(),unit=String(f.get("unit")||"").trim().toLowerCase(),supplierName=String(f.get("supplier_name")||"").trim();
+    const nextQty=Number(f.get("quantity")),nextCost=Number(f.get("unit_cost")),nextTransport=Number(f.get("transport_cost")||0),nextLoading=Number(f.get("loading_cost")||0),oldQty=Number(p.quantity||0);
+    if(!name||!(nextQty>0)||![nextCost,nextTransport,nextLoading].every(n=>Number.isFinite(n)&&n>=0)){say("purchaseEditMsg","Please enter a product name, valid quantity and non-negative costs.");return}
+    const btn=$("purchaseEditSave");btn.disabled=true;say("purchaseEditMsg","Saving changes…");
+    try{
+      let supplierId=null;
+      if(supplierName){const {data:found,error:findErr}=await db.from("suppliers").select("id,name").eq("business_id",business.id).ilike("name",supplierName).limit(1);if(findErr)throw findErr;if(found?.length)supplierId=found[0].id;else{const {data:created,error:createErr}=await db.from("suppliers").insert({business_id:business.id,name:supplierName}).select("id").single();if(createErr)throw createErr;supplierId=created.id}}
+      const changes={product_name:name,unit,quantity:nextQty,unit_cost:nextCost,transport_cost:nextTransport,loading_cost:nextLoading,total_cost:nextQty*nextCost+nextTransport+nextLoading,supplier_id:supplierId,supplier_name:supplierName||null};
+      const {error}=await db.from("purchases").update(changes).eq("id",p.id).eq("business_id",business.id);if(error)throw error;
+      if(p.product_id&&prod){const {error:productError}=await db.from("products").update({name,unit,cost_price:nextCost,stock_quantity:Math.max(0,Number(prod.stock_quantity||0)+(nextQty-oldQty))}).eq("id",p.product_id).eq("business_id",business.id);if(productError)throw productError}
+      await purchasesPage();say("purchaseHistoryMsg","Purchase details updated.");
+    }catch(err){say("purchaseEditMsg","Could not edit purchase: "+(err.message||err))}finally{if($("purchaseEditSave"))$("purchaseEditSave").disabled=false}
+  };
   $("content").querySelectorAll("[data-delete-purchase]").forEach(btn=>btn.onclick=async()=>{
     const p=ps.find(x=>String(x.id)===btn.dataset.deletePurchase);if(!p)return;
     if(!confirm(`Delete purchase ${p.purchase_number||p.id}? This will also reverse its quantity from stock when linked to a product.`))return;
