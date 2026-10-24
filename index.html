@@ -155,7 +155,7 @@ async function addProductPage(){
   $("addProductForm").onsubmit=async e=>{
     e.preventDefault();const f=new FormData(e.currentTarget);
     const row={business_id:business.id,name:String(f.get("name")).trim(),sku:String(f.get("sku")||"").trim()||null,category:String(f.get("category")||"").trim()||null,unit:String(f.get("unit")),stock_quantity:0,cost_price:Math.max(0,Number(f.get("cost_price"))||0),selling_price:0,low_stock_threshold:Math.max(0,Number(f.get("low_stock_threshold"))||0)};
-    try{const {error}=await db.from("products").insert(row);if(error)throw error;say("addProductMsg","Product added. Go to Purchases to record the quantity received.");e.currentTarget.reset()}
+    try{const {error}=await db.from("products").insert(row);if(error)throw error;say("addProductMsg","Product added. Go to Purchases to record the quantity received.");e.currentTarget?.reset?.()}
     catch(err){say("addProductMsg",err.message||"Could not add product.")}
   };
 }
