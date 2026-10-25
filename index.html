@@ -12,7 +12,7 @@
 </head>
 <body>
 <section id="auth" class="auth"><div class="authcard"><div class="logo">WΩ</div><p class="gold" style="margin-top:16px;letter-spacing:2px;font-size:11px">SALES · RESTAURANT · BUSINESS</p><h1>WIZO <span class="gold">OMEGA POS</span></h1><p class="muted">Manage your business from one place.</p><div class="tabs"><button id="signinTab" class="active" type="button">Sign in</button><button id="signupTab" type="button">Create account</button></div><form id="authForm"><div id="businessField" class="hidden"><label>Business / Restaurant name</label><input id="businessName" autocomplete="organization" placeholder="Your business name"></div><label>Email</label><input id="email" type="email" required autocomplete="email" placeholder="you@example.com"><label>Password</label><input id="password" type="password" required minlength="8" autocomplete="current-password" placeholder="At least 8 characters"><button id="authSubmit" class="primary" style="width:100%;margin-top:16px" type="submit">Sign in</button><div id="authMsg" class="msg"></div></form></div></section>
-<div id="shell" class="shell" hidden><aside><div class="brand">WΩ WIZO OMEGA</div><nav id="nav"><button data-page="Dashboard" class="active">▦ Dashboard</button><button data-page="POS">▣ POS / New Sale</button><button data-page="Products">◫ Menu</button><button data-page="Purchases">⇩ Purchases</button><button data-page="Expenses">↗ Expenses</button><button data-page="Customers">♙ Customers</button><button data-page="Suppliers">♧ Suppliers</button><button data-page="Sales">▤ Sales History</button><button data-page="Reports">▥ Reports</button><button data-page="Cashier Management">♙ Cashier Management</button><button data-page="Budget">▤ Budget</button><button data-page="Settings">⚙ Settings</button></nav></aside><main class="main"><div class="topbar"><div><p class="gold" style="font-size:10px;letter-spacing:2px;margin-bottom:4px">BUSINESS MANAGEMENT</p><h2 id="pageTitle">Dashboard</h2></div><div class="topbar-actions"><span id="businessChip" class="chip">My Business</span><button id="logout" class="top-logout" type="button">↪ Sign out</button></div></div><div id="appNotice"></div><section id="content"></section></main></div>
+<div id="shell" class="shell" hidden><aside><div class="brand">WΩ WIZO OMEGA</div><nav id="nav"><button data-page="Dashboard" class="active">▦ Dashboard</button><button data-page="POS">▣ POS / New Sale</button><button data-page="Products">◫ Menu</button><button data-page="Purchases">⇩ Purchases</button><button data-page="Expenses">↗ Expenses</button><button data-page="Customers">♙ Customers</button><button data-page="Suppliers">♧ Suppliers</button><button data-page="Sales">▤ Sales History</button><button data-page="Reports">▥ Reports</button><button data-page="Cashier Management">♙ Cashier Management</button><button data-page="Employees">♧ Employees</button><button data-page="Budget">▤ Budget</button><button data-page="Settings">⚙ Settings</button></nav></aside><main class="main"><div class="topbar"><div><p class="gold" style="font-size:10px;letter-spacing:2px;margin-bottom:4px">BUSINESS MANAGEMENT</p><h2 id="pageTitle">Dashboard</h2></div><div class="topbar-actions"><span id="businessChip" class="chip">My Business</span><button id="logout" class="top-logout" type="button">↪ Sign out</button></div></div><div id="appNotice"></div><section id="content"></section></main></div>
 <div id="printArea" class="hidden"></div>
 <script>
 const SUPABASE_URL="https://hgwotfexwdctqjprkbst.supabase.co";
@@ -44,7 +44,7 @@ async function loadBusiness(){
 }
 function isOwnerRole(){return ["owner","admin"].includes(currentRole)}
 function applyRoleAccess(){
-  const allowed=isOwnerRole()?["Dashboard","POS","Products","Purchases","Expenses","Customers","Suppliers","Sales","Reports","Cashier Management","Budget","Settings"]:["POS","Sales"];
+  const allowed=isOwnerRole()?["Dashboard","POS","Products","Purchases","Expenses","Customers","Suppliers","Sales","Reports","Cashier Management","Employees","Budget","Settings"]:["POS","Sales"];
   document.querySelectorAll("#nav button[data-page]").forEach(b=>{
     const ok=allowed.includes(b.dataset.page);
     b.hidden=!ok;
@@ -59,7 +59,7 @@ async function showPage(p){
   pageNow=p;$("pageTitle").textContent=p;
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));
   showNotice("");
-  try{if(p==="Dashboard")await dashboard();else if(p==="POS")await renderPOS();else if(p==="Products")await productsPage();else if(p==="Purchases")await purchasesPage();else if(p==="Expenses")await expensesPage();else if(p==="Customers")await simpleDirectory("Customers");else if(p==="Suppliers")await simpleDirectory("Suppliers");else if(p==="Sales")await salesPage();else if(p==="Reports")await reportsPage();else if(p==="Cashier Management")await cashierManagementPage();else if(p==="Budget")await budgetPage();else if(p==="Settings")settingsPage()}
+  try{if(p==="Dashboard")await dashboard();else if(p==="POS")await renderPOS();else if(p==="Products")await productsPage();else if(p==="Purchases")await purchasesPage();else if(p==="Expenses")await expensesPage();else if(p==="Customers")await simpleDirectory("Customers");else if(p==="Suppliers")await simpleDirectory("Suppliers");else if(p==="Sales")await salesPage();else if(p==="Reports")await reportsPage();else if(p==="Cashier Management")await cashierManagementPage();else if(p==="Employees")await employeesPage();else if(p==="Budget")await budgetPage();else if(p==="Settings")settingsPage()}
   catch(err){showNotice(err.message||String(err));$("content").innerHTML=`<div class="panel"><h3>Unable to load this page</h3><p>${esc(err.message||String(err))}</p></div>`}
 }
 async function q(table,select="*"){const {data,error}=await db.from(table).select(select).order("created_at",{ascending:false});if(error)throw error;return data||[]}
@@ -292,6 +292,72 @@ async function cashierManagementPage(){
     }finally{if($("inviteCashierBtn"))$("inviteCashierBtn").disabled=false}
   };
 }
+
+async function employeesPage(){
+  if(!isOwnerRole())throw Error("Owner/Admin only.");
+  const {data:employees,error}=await db.from("employees").select("*").eq("business_id",business.id).order("created_at",{ascending:false});
+  if(error)throw error;
+  const rows=employees||[];
+  $("content").innerHTML=`<div class="panel">
+    <div class="row" style="align-items:center"><div><h3 id="employeeFormTitle">＋ Add Employee</h3><p class="muted">Store employee details for this business. Only Owner/Admin can access this page.</p></div><button type="button" id="employeeResetTop" style="flex:0 0 auto">＋ New employee</button></div>
+    <form id="employeeForm">
+      <input type="hidden" name="id">
+      <div class="formgrid">
+        <div><label>Full name *</label><input name="full_name" required maxlength="150" placeholder="Employee full name"></div>
+        <div><label>Phone</label><input name="phone" maxlength="40" placeholder="Phone number"></div>
+        <div><label>Email</label><input name="email" type="email" maxlength="254" placeholder="employee@example.com"></div>
+        <div><label>Job title / Position *</label><input name="position" required maxlength="100" placeholder="e.g. Cook, Waiter, Manager"></div>
+        <div><label>Monthly salary (${esc(profile.currency||"ETB")})</label><input name="salary" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        <div><label>Hire date</label><input name="hire_date" type="date"></div>
+        <div><label>Status</label><select name="status"><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
+        <div style="grid-column:1/-1"><label>Notes (optional)</label><textarea name="notes" rows="2" maxlength="2000" placeholder="Additional details"></textarea></div>
+      </div>
+      <div class="row" style="margin-top:14px"><button class="primary" id="employeeSaveBtn" type="submit">Save employee</button><button type="button" id="employeeCancelBtn" class="hidden">Cancel edit</button></div>
+      <span id="employeeMsg" class="msg"></span>
+    </form>
+  </div>
+  <div class="panel"><div class="row" style="align-items:center"><h3 style="margin:0">Employees (${rows.length})</h3><input id="employeeSearch" placeholder="Search name, phone, position…" style="max-width:300px"></div>
+    <div id="employeeTable" class="tablewrap" style="margin-top:12px"></div><p id="employeeListMsg" class="msg"></p>
+  </div>`;
+  const form=$("employeeForm");
+  const reset=()=>{form.reset();form.elements.id.value="";$("employeeFormTitle").textContent="＋ Add Employee";$("employeeSaveBtn").textContent="Save employee";$("employeeCancelBtn").classList.add("hidden");say("employeeMsg","")};
+  const renderRows=()=>{
+    const term=$("employeeSearch").value.trim().toLowerCase();
+    const filtered=rows.filter(r=>[r.full_name,r.phone,r.email,r.position,r.status].some(v=>String(v||"").toLowerCase().includes(term)));
+    $("employeeTable").innerHTML=filtered.length?`<table><thead><tr><th>Full name</th><th>Position</th><th>Phone</th><th>Email</th><th>Salary</th><th>Hire date</th><th>Status</th><th>Actions</th></tr></thead><tbody>${filtered.map(r=>`<tr><td>${esc(r.full_name)}</td><td>${esc(r.position)}</td><td>${esc(r.phone||"—")}</td><td>${esc(r.email||"—")}</td><td>${r.salary===null||r.salary===undefined?"—":money(r.salary)}</td><td>${esc(r.hire_date||"—")}</td><td><span class="chip">${esc(r.status||"active")}</span></td><td><div class="row" style="min-width:130px"><button type="button" data-edit-employee="${esc(r.id)}">Edit</button><button type="button" class="danger" data-delete-employee="${esc(r.id)}">Delete</button></div></td></tr>`).join("")}</tbody></table>`:'<div class="empty">No employees found. Add an employee using the form above.</div>';
+    $("employeeTable").querySelectorAll("[data-edit-employee]").forEach(btn=>btn.onclick=()=>{
+      const r=rows.find(x=>String(x.id)===btn.dataset.editEmployee);if(!r)return;
+      form.elements.id.value=r.id;form.elements.full_name.value=r.full_name||"";form.elements.phone.value=r.phone||"";form.elements.email.value=r.email||"";form.elements.position.value=r.position||"";form.elements.salary.value=r.salary??"";form.elements.hire_date.value=r.hire_date||"";form.elements.status.value=r.status||"active";form.elements.notes.value=r.notes||"";
+      $("employeeFormTitle").textContent="Edit Employee";$("employeeSaveBtn").textContent="Save changes";$("employeeCancelBtn").classList.remove("hidden");form.scrollIntoView({behavior:"smooth",block:"start"});
+    });
+    $("employeeTable").querySelectorAll("[data-delete-employee]").forEach(btn=>btn.onclick=async()=>{
+      const r=rows.find(x=>String(x.id)===btn.dataset.deleteEmployee);if(!r)return;
+      if(!confirm(`Delete employee "${r.full_name}"? This only deletes this employee record.`))return;
+      btn.disabled=true;
+      try{const {error}=await db.from("employees").delete().eq("id",r.id).eq("business_id",business.id);if(error)throw error;await employeesPage();say("employeeListMsg","Employee deleted.");}
+      catch(err){btn.disabled=false;say("employeeListMsg","Could not delete employee: "+(err.message||err));}
+    });
+  };
+  $("employeeResetTop").onclick=reset;$("employeeCancelBtn").onclick=reset;$("employeeSearch").oninput=renderRows;
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const f=new FormData(form),id=String(f.get("id")||"").trim();
+    const name=String(f.get("full_name")||"").trim(),position=String(f.get("position")||"").trim();
+    const salaryText=String(f.get("salary")||"").trim(),salary=salaryText===""?null:Number(salaryText);
+    if(!name||!position){say("employeeMsg","Enter the employee name and job title.");return}
+    if(salary!==null&&(!Number.isFinite(salary)||salary<0)){say("employeeMsg","Salary must be zero or a positive amount.");return}
+    const payload={business_id:business.id,full_name:name,phone:String(f.get("phone")||"").trim()||null,email:String(f.get("email")||"").trim()||null,position,salary,hire_date:String(f.get("hire_date")||"").trim()||null,status:String(f.get("status")||"active"),notes:String(f.get("notes")||"").trim()||null};
+    const btn=$("employeeSaveBtn");btn.disabled=true;say("employeeMsg",id?"Saving changes…":"Saving employee…");
+    try{
+      if(id){const {error}=await db.from("employees").update(payload).eq("id",id).eq("business_id",business.id);if(error)throw error;}
+      else {const {error}=await db.from("employees").insert(payload);if(error)throw error;}
+      await employeesPage();say("employeeMsg",id?"Employee updated successfully.":"Employee saved successfully.");
+    }catch(err){say("employeeMsg","Could not save employee: "+(err.message||err));}
+    finally{if($("employeeSaveBtn"))$("employeeSaveBtn").disabled=false}
+  };
+  renderRows();
+}
+
 async function budgetPage(){
   if(!isOwnerRole())throw Error("Owner/Admin only.");
   const [sales,expenses,purchases]=await Promise.all([q("sales"),q("expenses"),q("purchases")]);
@@ -309,11 +375,11 @@ async function budgetPage(){
 }
 function settingsPage(){$("content").innerHTML=`<div class="panel"><h3>Business / receipt settings</h3><form id="settingsForm"><div class="formgrid"><div><label>Business name</label><input name="name" required value="${esc(profile.name||"")}"></div><div><label>Phone</label><input name="phone" value="${esc(profile.phone||"")}"></div><div><label>Address</label><input name="address" value="${esc(profile.address||"")}"></div><div><label>Currency</label><select name="currency"><option ${profile.currency==="ETB"?"selected":""}>ETB</option><option ${profile.currency==="SAR"?"selected":""}>SAR</option><option ${profile.currency==="USD"?"selected":""}>USD</option></select></div><div style="grid-column:1/-1"><label>Logo image URL (optional)</label><input name="logo_url" value="${esc(profile.logo_url||"")}"></div></div><button class="primary" style="margin-top:14px">Save settings</button><span id="settingsMsg" class="msg"></span></form><p class="muted">These details are used on receipts. The logo URL must be a publicly accessible image URL.</p></div>
 <div class="panel"><h3>Backup & Restore Data</h3><p class="muted">Download a backup of this business data or restore from a WIZO OMEGA POS JSON backup file.</p><button type="button" class="primary" id="backupDataBtn">Download Backup</button> <label for="restoreDataFile" class="btn">Choose backup file</label><input id="restoreDataFile" type="file" accept=".json,application/json" style="display:none"><button type="button" id="restoreDataBtn">Restore Data</button><span id="dataToolsMsg" class="msg"></span></div>
-<div class="panel"><h3>Delete Business Data</h3><p class="muted">This permanently deletes sales, purchases, expenses, products, customers and suppliers for this business. Business name and login account are kept. Download a backup first.</p><label>Type DELETE to confirm</label><input id="deleteDataConfirm" placeholder="DELETE"><button type="button" id="deleteDataBtn" style="margin-top:10px;background:#b91c1c;color:white">Delete Data</button><span id="deleteDataMsg" class="msg"></span></div>`;
+<div class="panel"><h3>Delete Business Data</h3><p class="muted">This permanently deletes sales, purchases, expenses, employees, products, customers and suppliers for this business. Business name and login account are kept. Download a backup first.</p><label>Type DELETE to confirm</label><input id="deleteDataConfirm" placeholder="DELETE"><button type="button" id="deleteDataBtn" style="margin-top:10px;background:#b91c1c;color:white">Delete Data</button><span id="deleteDataMsg" class="msg"></span></div>`;
 $("settingsForm").onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const {error}=await db.from("businesses").update({name:f.get("name"),phone:f.get("phone")||null,address:f.get("address")||null,currency:f.get("currency"),logo_url:f.get("logo_url")||null}).eq("id",business.id);if(error)throw error;await loadBusiness();say("settingsMsg","Settings saved.")}catch(err){say("settingsMsg",err.message)}};
-$("backupDataBtn").onclick=async()=>{const btn=$("backupDataBtn");btn.disabled=true;say("dataToolsMsg","Creating backup…");try{const tables=["products","suppliers","customers","purchases","sales","expenses"];const backup={app:"WIZO OMEGA POS",version:1,business_id:business.id,created_at:new Date().toISOString(),data:{}};for(const table of tables){const {data,error}=await db.from(table).select("*").eq("business_id",business.id);if(error&&error.code!=="42P01")throw error;backup.data[table]=data||[]}const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="WIZO_OMEGA_POS_backup_"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(url);say("dataToolsMsg","Backup downloaded.")}catch(err){say("dataToolsMsg","Backup failed: "+(err.message||err))}finally{btn.disabled=false}};
-$("restoreDataBtn").onclick=async()=>{const file=$("restoreDataFile").files[0];if(!file){say("dataToolsMsg","Choose a backup JSON file first.");return}if(!confirm("Restore records from this backup? Existing records with the same IDs may be updated."))return;const btn=$("restoreDataBtn");btn.disabled=true;say("dataToolsMsg","Restoring backup…");try{const backup=JSON.parse(await file.text());if(backup.app!=="WIZO OMEGA POS"||!backup.data||!backup.business_id)throw new Error("This is not a valid WIZO OMEGA POS backup.");const tables=["products","suppliers","customers","purchases","sales","expenses"];for(const table of tables){const rows=backup.data[table]||[];if(!rows.length)continue;if(rows.some(r=>r.business_id!==business.id))throw new Error("Backup belongs to a different business. Restore stopped.");const {error}=await db.from(table).upsert(rows,{onConflict:"id"});if(error)throw new Error(table+": "+error.message)}say("dataToolsMsg","Restore finished. Refresh the page to see restored data.")}catch(err){say("dataToolsMsg","Restore failed: "+(err.message||err))}finally{btn.disabled=false}};
-$("deleteDataBtn").onclick=async()=>{if($("deleteDataConfirm").value.trim()!=="DELETE"){say("deleteDataMsg",'Type DELETE exactly to confirm.');return}if(!confirm("This permanently deletes all selected business records. Continue?"))return;const btn=$("deleteDataBtn");btn.disabled=true;say("deleteDataMsg","Deleting business data…");try{for(const table of ["sales","purchases","expenses","customers","suppliers","products"]){const {error}=await db.from(table).delete().eq("business_id",business.id);if(error&&error.code!=="42P01")throw new Error(table+": "+error.message)}say("deleteDataMsg","Business data deleted. Business settings and login account remain.")}catch(err){say("deleteDataMsg","Delete stopped: "+(err.message||err))}finally{btn.disabled=false}};
+$("backupDataBtn").onclick=async()=>{const btn=$("backupDataBtn");btn.disabled=true;say("dataToolsMsg","Creating backup…");try{const tables=["products","suppliers","customers","employees","purchases","sales","expenses"];const backup={app:"WIZO OMEGA POS",version:1,business_id:business.id,created_at:new Date().toISOString(),data:{}};for(const table of tables){const {data,error}=await db.from(table).select("*").eq("business_id",business.id);if(error&&error.code!=="42P01")throw error;backup.data[table]=data||[]}const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="WIZO_OMEGA_POS_backup_"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(url);say("dataToolsMsg","Backup downloaded.")}catch(err){say("dataToolsMsg","Backup failed: "+(err.message||err))}finally{btn.disabled=false}};
+$("restoreDataBtn").onclick=async()=>{const file=$("restoreDataFile").files[0];if(!file){say("dataToolsMsg","Choose a backup JSON file first.");return}if(!confirm("Restore records from this backup? Existing records with the same IDs may be updated."))return;const btn=$("restoreDataBtn");btn.disabled=true;say("dataToolsMsg","Restoring backup…");try{const backup=JSON.parse(await file.text());if(backup.app!=="WIZO OMEGA POS"||!backup.data||!backup.business_id)throw new Error("This is not a valid WIZO OMEGA POS backup.");const tables=["products","suppliers","customers","employees","purchases","sales","expenses"];for(const table of tables){const rows=backup.data[table]||[];if(!rows.length)continue;if(rows.some(r=>r.business_id!==business.id))throw new Error("Backup belongs to a different business. Restore stopped.");const {error}=await db.from(table).upsert(rows,{onConflict:"id"});if(error)throw new Error(table+": "+error.message)}say("dataToolsMsg","Restore finished. Refresh the page to see restored data.")}catch(err){say("dataToolsMsg","Restore failed: "+(err.message||err))}finally{btn.disabled=false}};
+$("deleteDataBtn").onclick=async()=>{if($("deleteDataConfirm").value.trim()!=="DELETE"){say("deleteDataMsg",'Type DELETE exactly to confirm.');return}if(!confirm("This permanently deletes all selected business records. Continue?"))return;const btn=$("deleteDataBtn");btn.disabled=true;say("deleteDataMsg","Deleting business data…");try{for(const table of ["sales","purchases","expenses","employees","customers","suppliers","products"]){const {error}=await db.from(table).delete().eq("business_id",business.id);if(error&&error.code!=="42P01")throw new Error(table+": "+error.message)}say("deleteDataMsg","Business data deleted. Business settings and login account remain.")}catch(err){say("deleteDataMsg","Delete stopped: "+(err.message||err))}finally{btn.disabled=false}};
 }
 (async()=>{if(!db){say("authMsg","Supabase library failed to load. Check internet.");return}const {data:{session}}=await db.auth.getSession();if(session){try{await boot()}catch(err){$("auth").hidden=false;$("shell").hidden=true;say("authMsg",err.message)}}})();
 </script>
