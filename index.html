@@ -405,8 +405,9 @@ $("deleteDataBtn").onclick=async()=>{
   if(!confirm("FINAL WARNING: This permanently deletes all sales, purchases, purchase items, expenses, employees, products/menu items, customers, suppliers, and budget history for THIS business. The business profile/settings and your login account will remain. Continue?"))return;
   const btn=$("deleteDataBtn");btn.disabled=true;say("deleteDataMsg","Deleting business data…");
   try{
-    // Remove dependent records before parent records to reduce foreign-key failures.
-    for(const table of ["purchase_items","sales","purchases","expenses","employees","customers","suppliers","products"]){
+    // Delete child rows first, then their parent rows, to respect foreign keys.
+    // Every database delete is scoped to the current business only.
+    for(const table of ["sale_items","purchase_items","sales","purchases","expenses","employees","customers","suppliers","products"]){
       const {error}=await db.from(table).delete().eq("business_id",business.id);
       if(error&&error.code!=="42P01")throw new Error(table+": "+error.message);
     }
@@ -415,7 +416,7 @@ $("deleteDataBtn").onclick=async()=>{
     localStorage.removeItem(`wizo_budget_${business.id}`);
     localStorage.removeItem(`wizo_budget_history_${business.id}`);
     $("deleteDataConfirm").value="";
-    say("deleteDataMsg","Finished. Sales, purchases, expenses, employees, products/menu, customers, suppliers and budget are cleared. Business name, settings and login account remain. Refresh the page to see the clean state.");
+    say("deleteDataMsg","Finished. Sales and sale items, purchases and purchase items, expenses, employees, products/menu, customers, suppliers and budget are cleared for this business. Business name, settings and login account remain. Local menu/budget data on other devices is not affected. Refresh the page to see the clean state.");
   }catch(err){say("deleteDataMsg","Delete stopped part-way through: "+(err.message||err)+". Some records may already have been deleted; check the data before retrying.")}
   finally{btn.disabled=false}
 };
