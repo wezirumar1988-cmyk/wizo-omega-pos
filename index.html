@@ -388,7 +388,31 @@ async function budgetPage(){
   const historyKey=`wizo_budget_history_${business.id}`;
   const renderBudgetHistory=()=>{let history=[];try{history=JSON.parse(localStorage.getItem(historyKey)||"[]")}catch{};const el=$("budgetHistory");if(!history.length){el.innerHTML='<p class="muted">No budget changes recorded yet. Save a budget to start the history.</p>';return}el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Date & time</th><th>Previous budget</th><th>New budget</th><th>Change</th><th>Actions</th></tr></thead><tbody>${history.map((h,i)=>`<tr><td>${esc(new Date(h.date).toLocaleString())}</td><td>${money(h.previous)}</td><td>${money(h.amount)}</td><td style="color:${h.amount>=h.previous?'var(--green, #15803d)':'var(--red)'}">${h.amount>=h.previous?'+':''}${money(h.amount-h.previous)}</td><td><div class="row"><button type="button" data-edit-budget-history="${i}">Edit</button><button type="button" class="danger" data-delete-budget-history="${i}">Delete</button></div></td></tr>`).join("")}</tbody></table></div>`;
  el.querySelectorAll("[data-edit-budget-history]").forEach(b=>b.onclick=()=>{const i=Number(b.dataset.editBudgetHistory);let list=[];try{list=JSON.parse(localStorage.getItem(historyKey)||"[]")}catch{};const h=list[i];if(!h)return;const editor=$("budgetHistoryEditor");editor.classList.remove("hidden");editor.innerHTML=`<h3>Edit budget history entry</h3><form id="budgetHistoryEditForm"><div class="formgrid"><div><label>Previous budget (${esc(profile.currency||"ETB")})</label><input name="previous" type="number" min="0" step=".01" value="${esc(h.previous)}" required></div><div><label>New budget (${esc(profile.currency||"ETB")})</label><input name="amount" type="number" min="0" step=".01" value="${esc(h.amount)}" required></div><div><label>Date & time</label><input name="date" type="datetime-local" value="${esc(new Date(h.date).toISOString().slice(0,16))}" required></div></div><div class="row" style="margin-top:12px"><button class="primary" type="submit">Save changes</button><button type="button" id="cancelBudgetHistoryEdit">Cancel</button></div><span id="budgetHistoryEditMsg" class="msg"></span></form>`;const f=$("budgetHistoryEditForm");$("cancelBudgetHistoryEdit").onclick=()=>editor.classList.add("hidden");f.onsubmit=e=>{e.preventDefault();const fd=new FormData(f),prev=Number(fd.get("previous")),amount=Number(fd.get("amount")),date=new Date(fd.get("date"));if(!Number.isFinite(prev)||prev<0||!Number.isFinite(amount)||amount<0||Number.isNaN(date.getTime())){say("budgetHistoryEditMsg","Enter valid values for all fields.");return}list[i]={...h,previous:prev,amount,date:date.toISOString()};localStorage.setItem(historyKey,JSON.stringify(list));editor.classList.add("hidden");renderBudgetHistory()};editor.scrollIntoView({behavior:"smooth",block:"start"})});
- el.querySelectorAll("[data-delete-budget-history]").forEach(b=>b.onclick=()=>{const i=Number(b.dataset.deleteBudgetHistory);let list=[];try{list=JSON.parse(localStorage.getItem(historyKey)||"[]")}catch{};if(!list[i]||!confirm("Delete this budget history entry? This does not change the current budget amount."))return;list.splice(i,1);localStorage.setItem(historyKey,JSON.stringify(list));renderBudgetHistory()});
+  el.querySelectorAll("[data-delete-budget-history]").forEach(b=>b.onclick=()=>{
+    const i=Number(b.dataset.deleteBudgetHistory);
+    let list=[];try{list=JSON.parse(localStorage.getItem(historyKey)||"[]")}catch{}
+    const entry=list[i];if(!entry)return;
+    const isLatest=i===0;
+    const promptText=isLatest
+      ?"Delete the latest budget history entry? The current budget will return to the previous amount shown in this entry."
+      :"Delete this older budget history entry? The current budget amount will stay unchanged.";
+    if(!confirm(promptText))return;
+    list.splice(i,1);
+    localStorage.setItem(historyKey,JSON.stringify(list));
+    if(isLatest){
+      const restored=Math.max(0,Number(entry.previous)||0);
+      localStorage.setItem(key,String(restored));
+      $("budgetTarget").value=String(restored);
+      const pct=restored>0?Math.min(100,purchaseTotal/restored*100):0;
+      $("budgetBar").style.width=pct+"%";
+      $("budgetProgress").textContent=restored>0?`${pct.toFixed(1)}% of budget used · Balance: ${money(restored-purchaseTotal)}`:"Enter a budget amount to calculate the balance.";
+      const stats=$("content").querySelectorAll(".stats .stat strong");
+      if(stats[0])stats[0].textContent=money(restored);
+      if(stats[2]){stats[2].textContent=money(restored-purchaseTotal);stats[2].style.color=(restored-purchaseTotal)<0?"var(--red)":"var(--lime)"}
+    }
+    renderBudgetHistory();
+    say("budgetMsg",isLatest?"Latest history deleted. Budget restored to the previous amount.":"History entry deleted. Current budget unchanged.");
+  });
  };
   renderBudgetHistory();
   $("budgetDashboard").onclick=()=>showPage("Dashboard");
