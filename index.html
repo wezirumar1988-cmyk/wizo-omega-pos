@@ -30,10 +30,10 @@ $("logout").onclick=async()=>{await db.auth.signOut();currentUser=null;business=
 $("nav").onclick=e=>{const b=e.target.closest("[data-page]");if(b)showPage(b.dataset.page)};
 async function boot(){const {data:{user},error}=await db.auth.getUser();if(error)throw error;if(!user)return;currentUser=user;$("auth").hidden=true;$("shell").hidden=false;await loadBusiness();await showPage("Dashboard")}
 async function loadBusiness(){
-  // A user can have memberships in more than one business. Do not use limit(1),
-  // because it may select an accidental/older Owner membership instead of the
-  // intended cashier membership. Prefer an active cashier membership that is
-  // explicitly linked to this login email, then fall back to active Owner/Admin.
+  // A user can have memberships in more than one business. Do not use limit(1).
+  // Prefer a cashier membership only when it is explicitly linked to this login email.
+  // Otherwise prefer Owner/Admin so a cashier membership in another business cannot
+  // accidentally select the wrong business and cause budget RLS failures.
   const loginEmail=String(currentUser.email||"").trim().toLowerCase();
   const {data:members,error:memberError}=await db.from("business_members")
     .select("business_id,role,email,full_name,is_active,created_at")
@@ -46,7 +46,7 @@ async function loadBusiness(){
   const emailCashier=activeMembers.find(m=>String(m.role||"").toLowerCase()==="cashier" && String(m.email||"").trim().toLowerCase()===loginEmail);
   const anyCashier=activeMembers.find(m=>String(m.role||"").toLowerCase()==="cashier");
   const ownerAdmin=activeMembers.find(m=>["owner","admin"].includes(String(m.role||"").toLowerCase()));
-  const membership=emailCashier||anyCashier||ownerAdmin||activeMembers[0];
+  const membership=emailCashier||ownerAdmin||anyCashier||activeMembers[0];
   currentRole=String(membership.role||"cashier").toLowerCase();
   const {data,error}=await db.from("businesses").select("*").eq("id",membership.business_id).maybeSingle();
   if(error)throw error;
