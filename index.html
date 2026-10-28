@@ -129,7 +129,7 @@ async function renderPOS(){
   const restaurantMenu=readRestaurantMenu().map(x=>({...x,id:`menu_${x.id}`,menu_only:true,unit:"item",selling_price:Number(x.price)||0,cost_price:0,stock_quantity:0,sku:""}));
   // POS is for restaurant menu items only. Purchases are recorded separately and are not sold directly from this screen.
   const allItems=restaurantMenu;
-  $("content").innerHTML=`<div class="pos"><div class="panel"><div class="row"><div><label>Search menu / barcode</label><input id="menuSearch" placeholder="Type product or menu item"></div><div><label>Category</label><select id="categoryFilter"><option value="">All categories</option>${[...new Set(allItems.map(p=>p.category).filter(Boolean))].map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></div></div><div id="menuGrid" class="menuitems" style="margin-top:12px"></div><p class="muted" style="margin-top:10px">Click an item to add it to the current order.</p></div><div class="panel"><h3>Current order</h3><div class="formgrid"><div><label>Table / order no.</label><input id="tableNo" placeholder="Takeaway / Table 1"></div><div><label>Customer</label><input id="saleCustomer" placeholder="Optional customer name"></div><div><label>Payment</label><select id="payment"><option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="credit">Credit</option></select></div><div><label>Discount</label><input id="discount" type="number" min="0" step=".01" value="0"></div></div><div id="cartItems" style="margin-top:15px"></div><div class="row" style="margin-top:15px"><span class="muted">Subtotal</span><b id="subtotal">${money(0)}</b></div><div class="row"><span class="muted">Total</span><strong class="total" id="cartTotal">${money(0)}</strong></div><div class="actionbar"><button id="clearCart">Clear</button><button id="payBtn" class="primary">💳 Pay & save sale</button></div><p class="muted" id="saleMsg" style="margin-top:10px"></p></div></div>`;
+  $("content").innerHTML=`<div class="pos"><div class="panel"><div class="row"><div><label>Search menu / barcode</label><input id="menuSearch" placeholder="Type product or menu item"></div><div><label>Category</label><select id="categoryFilter"><option value="">All categories</option>${[...new Set(allItems.map(p=>p.category).filter(Boolean))].map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></div></div><div id="menuGrid" class="menuitems" style="margin-top:12px"></div><p class="muted" style="margin-top:10px">Click an item to add it to the current order.</p></div><div class="panel"><h3>Current order</h3><div class="formgrid"><div><label>Table / order no.</label><input id="tableNo" placeholder="Takeaway / Table 1"></div><div><label>Customer</label><input id="saleCustomer" placeholder="Optional customer name"></div><div><label>Payment</label><select id="payment"><option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="credit">Credit</option></select></div><div><label>Discount</label><input id="discount" type="number" min="0" step=".01" value="0"></div></div><div id="cartItems" style="margin-top:15px"></div><div class="row" style="margin-top:15px"><span class="muted">Subtotal</span><b id="subtotal">${money(0)}</b></div><div class="row"><span class="muted">Total</span><strong class="total" id="cartTotal">${money(0)}</strong></div><div class="actionbar"><button id="clearCart">Clear</button><button id="holdSaleBtn" type="button" style="background:#d99000;color:#fff;border-color:#d99000;font-weight:800">⏸ Hold</button><button id="recallSaleBtn" type="button" style="background:#15803d;color:#fff;border-color:#15803d;font-weight:800">↶ Recall <span id="heldCount"></span></button><button id="payBtn" class="primary">💳 Pay & save sale</button></div><p class="muted" id="saleMsg" style="margin-top:10px"></p></div></div>`;
   const paintMenu=()=>{
     const term=$("menuSearch").value.toLowerCase(),cat=$("categoryFilter").value;
     const list=allItems.filter(p=>(!cat||p.category===cat)&&(!term||String(p.name||"").toLowerCase().includes(term)||(p.sku||"").toLowerCase().includes(term)));
@@ -140,7 +140,31 @@ async function renderPOS(){
     $$("[data-add]").forEach(b=>b.onclick=()=>addToCart(b.dataset.add));
   };
   $("menuSearch").oninput=paintMenu;$("categoryFilter").onchange=paintMenu;paintMenu();
-  $("clearCart").onclick=()=>{cart=[];paintCart()};$("discount").oninput=paintCart;$("payBtn").onclick=checkout;paintCart();
+  const heldKey=`wizo_held_sales_${business.id}`;
+  const readHeldSales=()=>{try{return JSON.parse(localStorage.getItem(heldKey)||"[]")}catch{return []}};
+  const paintHeldCount=()=>{const count=readHeldSales().length;$("heldCount").textContent=count?`(${count})`:"";$("recallSaleBtn").title=count?`${count} held order(s)`:"No held orders"};
+  $("holdSaleBtn").onclick=()=>{
+    if(!cart.length){say("saleMsg","Add items to the order before holding it.");return}
+    const held=readHeldSales();
+    held.unshift({id:`${Date.now()}_${Math.random().toString(36).slice(2,7)}`,held_at:new Date().toISOString(),cart:cart.map(x=>({...x})),tableNo:$("tableNo").value,saleCustomer:$("saleCustomer").value,payment:$("payment").value,discount:$("discount").value});
+    try{localStorage.setItem(heldKey,JSON.stringify(held));cart=[];$("tableNo").value="";$("saleCustomer").value="";$("payment").value="cash";$("discount").value="0";paintCart();paintHeldCount();say("saleMsg","Order held. You can serve another customer now.")}
+    catch(err){say("saleMsg","Could not hold this order. Browser storage may be full.")}
+  };
+  $("recallSaleBtn").onclick=()=>{
+    const held=readHeldSales();
+    if(!held.length){say("saleMsg","There are no held orders to recall.");return}
+    if(cart.length&&!confirm("Replace the current order with a held order? Hold the current order first if you want to keep it."))return;
+    const options=held.map((x,i)=>`${i+1}. ${x.tableNo||"No table"} — ${(x.cart||[]).reduce((n,it)=>n+(Number(it.quantity)||0),0)} item(s) — ${new Date(x.held_at).toLocaleString()}`).join("\\n");
+    const answer=prompt("Choose the held order number to recall:\\n"+options,"1");
+    if(answer===null)return;
+    const index=Number(answer)-1;
+    if(!Number.isInteger(index)||index<0||index>=held.length){say("saleMsg","Invalid held order number.");return}
+    const selected=held[index];
+    cart=(selected.cart||[]).map(x=>({...x}));
+    $("tableNo").value=selected.tableNo||"";$("saleCustomer").value=selected.saleCustomer||"";$("payment").value=selected.payment||"cash";$("discount").value=selected.discount??"0";
+    held.splice(index,1);localStorage.setItem(heldKey,JSON.stringify(held));paintCart();paintHeldCount();say("saleMsg","Held order recalled. You can continue the sale.");
+  };
+  $("clearCart").onclick=()=>{cart=[];paintCart()};$("discount").oninput=paintCart;$("payBtn").onclick=checkout;paintCart();paintHeldCount();
 }
 function addToCart(id){
   const p=products.find(x=>String(x.id)===String(id));
