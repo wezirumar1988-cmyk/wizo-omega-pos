@@ -140,31 +140,60 @@ async function renderPOS(){
     $$("[data-add]").forEach(b=>b.onclick=()=>addToCart(b.dataset.add));
   };
   $("menuSearch").oninput=paintMenu;$("categoryFilter").onchange=paintMenu;paintMenu();
-  const heldKey=`wizo_held_sales_${business.id}`;
-  const readHeldSales=()=>{try{return JSON.parse(localStorage.getItem(heldKey)||"[]")}catch{return []}};
-  const paintHeldCount=()=>{const count=readHeldSales().length;$("heldCount").textContent=count?`(${count})`:"";$("recallSaleBtn").title=count?`${count} held order(s)`:"No held orders"};
-  $("holdSaleBtn").onclick=()=>{
+  // Held orders are stored in Supabase so they survive browser cleanup and can be recalled on another device.
+  let heldOrders=[];
+  const loadHeldSales=async()=>{
+    const {data,error}=await db.from("wizo_held_sales")
+      .select("id,business_id,held_by,order_data,held_at")
+      .eq("business_id",business.id)
+      .order("held_at",{ascending:false});
+    if(error)throw error;
+    heldOrders=data||[];
+    paintHeldCount();
+    return heldOrders;
+  };
+  const paintHeldCount=()=>{
+    const count=heldOrders.length;
+    if($("heldCount"))$("heldCount").textContent=count?`(${count})`:"";
+    if($("recallSaleBtn"))$("recallSaleBtn").title=count?`${count} held order(s)`:"No held orders";
+  };
+  $("holdSaleBtn").onclick=async()=>{
     if(!cart.length){say("saleMsg","Add items to the order before holding it.");return}
-    const held=readHeldSales();
-    held.unshift({id:`${Date.now()}_${Math.random().toString(36).slice(2,7)}`,held_at:new Date().toISOString(),cart:cart.map(x=>({...x})),tableNo:$("tableNo").value,saleCustomer:$("saleCustomer").value,payment:$("payment").value,discount:$("discount").value});
-    try{localStorage.setItem(heldKey,JSON.stringify(held));cart=[];$("tableNo").value="";$("saleCustomer").value="";$("payment").value="cash";$("discount").value="0";paintCart();paintHeldCount();say("saleMsg","Order held. You can serve another customer now.")}
-    catch(err){say("saleMsg","Could not hold this order. Browser storage may be full.")}
+    const btn=$("holdSaleBtn");btn.disabled=true;say("saleMsg","Saving held order to Supabase…");
+    const orderData={cart:cart.map(x=>({...x})),tableNo:$("tableNo").value,saleCustomer:$("saleCustomer").value,payment:$("payment").value,discount:$("discount").value};
+    try{
+      const {error}=await db.from("wizo_held_sales").insert({business_id:business.id,held_by:currentUser.id,order_data:orderData}).select("id").single();
+      if(error)throw error;
+      cart=[];$("tableNo").value="";$("saleCustomer").value="";$("payment").value="cash";$("discount").value="0";
+      paintCart();await loadHeldSales();say("saleMsg","Order held safely in Supabase Cloud. You can serve another customer now.");
+    }catch(err){say("saleMsg","Could not hold order in cloud: "+(err.message||err)+". Check that the SQL setup for wizo_held_sales is complete.")}
+    finally{btn.disabled=false}
   };
-  $("recallSaleBtn").onclick=()=>{
-    const held=readHeldSales();
-    if(!held.length){say("saleMsg","There are no held orders to recall.");return}
-    if(cart.length&&!confirm("Replace the current order with a held order? Hold the current order first if you want to keep it."))return;
-    const options=held.map((x,i)=>`${i+1}. ${x.tableNo||"No table"} — ${(x.cart||[]).reduce((n,it)=>n+(Number(it.quantity)||0),0)} item(s) — ${new Date(x.held_at).toLocaleString()}`).join("\\n");
-    const answer=prompt("Choose the held order number to recall:\\n"+options,"1");
-    if(answer===null)return;
-    const index=Number(answer)-1;
-    if(!Number.isInteger(index)||index<0||index>=held.length){say("saleMsg","Invalid held order number.");return}
-    const selected=held[index];
-    cart=(selected.cart||[]).map(x=>({...x}));
-    $("tableNo").value=selected.tableNo||"";$("saleCustomer").value=selected.saleCustomer||"";$("payment").value=selected.payment||"cash";$("discount").value=selected.discount??"0";
-    held.splice(index,1);localStorage.setItem(heldKey,JSON.stringify(held));paintCart();paintHeldCount();say("saleMsg","Held order recalled. You can continue the sale.");
+  $("recallSaleBtn").onclick=async()=>{
+    const btn=$("recallSaleBtn");btn.disabled=true;say("saleMsg","Loading held orders from Supabase…");
+    try{
+      const held=await loadHeldSales();
+      if(!held.length){say("saleMsg","There are no held orders to recall.");return}
+      if(cart.length&&!confirm("Replace the current order with a held order? Hold the current order first if you want to keep it."))return;
+      const getData=x=>x.order_data&&typeof x.order_data==="object"?x.order_data:{};
+      const options=held.map((x,i)=>{const d=getData(x);return `${i+1}. ${(d.tableNo||"No table")} — ${(d.cart||[]).reduce((n,it)=>n+(Number(it.quantity)||0),0)} item(s) — ${new Date(x.held_at).toLocaleString()}`}).join("\n");
+      const answer=prompt("Choose the held order number to recall:\n"+options,"1");
+      if(answer===null)return;
+      const index=Number(answer)-1;
+      if(!Number.isInteger(index)||index<0||index>=held.length){say("saleMsg","Invalid held order number.");return}
+      const selected=held[index],data=getData(selected);
+      if(!Array.isArray(data.cart)||!data.cart.length){say("saleMsg","This held order has no valid cart items and was not removed.");return}
+      cart=data.cart.map(x=>({...x}));
+      $("tableNo").value=data.tableNo||"";$("saleCustomer").value=data.saleCustomer||"";$("payment").value=data.payment||"cash";$("discount").value=data.discount??"0";
+      // Delete from cloud only after a valid order has been loaded into the POS.
+      const {error}=await db.from("wizo_held_sales").delete().eq("id",selected.id).eq("business_id",business.id);
+      if(error){cart=[];paintCart();throw error}
+      paintCart();await loadHeldSales();say("saleMsg","Held order recalled from Supabase. You can continue the sale.");
+    }catch(err){say("saleMsg","Could not recall held order: "+(err.message||err))}
+    finally{btn.disabled=false}
   };
-  $("clearCart").onclick=()=>{cart=[];paintCart()};$("discount").oninput=paintCart;$("payBtn").onclick=checkout;paintCart();paintHeldCount();
+  $("clearCart").onclick=()=>{cart=[];paintCart()};$("discount").oninput=paintCart;$("payBtn").onclick=checkout;paintCart();
+  loadHeldSales().catch(err=>say("saleMsg","Could not load cloud held orders: "+(err.message||err)+". Run the supplied SQL setup in Supabase first."));
 }
 function addToCart(id){
   const p=products.find(x=>String(x.id)===String(id));
@@ -500,7 +529,7 @@ $("deleteDataBtn").onclick=async()=>{
   try{
     // Delete child rows first, then their parent rows, to respect foreign keys.
     // Every database delete is scoped to the current business only.
-    for(const table of ["sale_items","purchase_items","sales","purchases","expenses","employees","customers","suppliers","products"]){
+    for(const table of ["wizo_held_sales","sale_items","purchase_items","sales","purchases","expenses","employees","customers","suppliers","products"]){
       const {error}=await db.from(table).delete().eq("business_id",business.id);
       if(error&&error.code!=="42P01")throw new Error(table+": "+error.message);
     }
