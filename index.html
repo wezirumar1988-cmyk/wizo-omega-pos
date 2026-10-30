@@ -105,6 +105,31 @@ function applyRoleAccess(){
   if(!allowed.includes(pageNow))pageNow=isSuperAdmin&&!adminRestaurantMode?"Super Admin":"POS";
 }
 function showNotice(msg){$("appNotice").innerHTML=msg?`<div class="notice">${esc(msg)}</div>`:""}
+async function getSuperAdminPaymentDetails(){
+  try{
+    const {data,error}=await db.from("wizo_super_admin_payment_details")
+      .select("account_name,account_number,bank_name,phone,email,instructions")
+      .eq("id",true).maybeSingle();
+    if(error)throw error;
+    return data||null;
+  }catch(err){console.warn("Super Admin payment details unavailable:",err.message||err);return null;}
+}
+async function saveSuperAdminPaymentDetails(form){
+  const f=new FormData(form);
+  const payload={
+    id:true,
+    account_name:String(f.get("account_name")||"").trim()||null,
+    account_number:String(f.get("account_number")||"").trim()||null,
+    bank_name:String(f.get("bank_name")||"").trim()||null,
+    phone:String(f.get("phone")||"").trim()||null,
+    email:String(f.get("email")||"").trim()||null,
+    instructions:String(f.get("instructions")||"").trim()||null,
+    updated_at:new Date().toISOString()
+  };
+  if(!payload.account_number&&!payload.phone&&!payload.email)throw Error("Enter at least an account number, telephone number, or email.");
+  const {error}=await db.from("wizo_super_admin_payment_details").upsert(payload,{onConflict:"id"});
+  if(error)throw error;
+}
 async function renderOwnerSubscriptionNotice(){
   if(!business||isSuperAdmin)return;
   const status=String(business.subscription_status||"active").toLowerCase();
@@ -129,9 +154,11 @@ async function renderOwnerSubscriptionNotice(){
     message=`Subscription status: ${status}. Please contact WIZO OMEGA Super Admin.`;expired=true;
   }
   if(!message)return;
+  const paymentInfo=await getSuperAdminPaymentDetails();
   $("appNotice").innerHTML=`<div class="subscription-alert ${expired?"expired":""}">
     <strong>${expired?"Subscription access needs attention":"Subscription information"}</strong>
     <p style="margin:6px 0 10px">${esc(message)}</p>
+    ${paymentInfo?`<div class="subscription-request-card"><strong>Super Admin Payment Details</strong><p style="margin:7px 0 0">Account / Bank: ${esc(paymentInfo.account_name||"—")}<br>Account Number: ${esc(paymentInfo.account_number||"—")}<br>Bank: ${esc(paymentInfo.bank_name||"—")}<br>Telephone: ${esc(paymentInfo.phone||"—")}<br>Email: ${esc(paymentInfo.email||"—")}${paymentInfo.instructions?`<br>Note: ${esc(paymentInfo.instructions)}`:""}</p></div>`:""}
     <button type="button" id="requestSubscriptionBtn" class="primary">✉ Request Subscription</button>
     <span id="subscriptionRequestMsg" class="msg"></span>
     <div id="mySubscriptionRequest"></div>
@@ -186,10 +213,12 @@ async function renderSubscriptionLockedPage(){
   pageNow="Subscription Expired";
   $("pageTitle").textContent="Subscription Expired";
   document.querySelectorAll("#nav button").forEach(b=>b.classList.remove("active"));
+  const paymentInfo=await getSuperAdminPaymentDetails();
   $("content").innerHTML=`<div class="panel" style="max-width:760px;margin:35px auto;text-align:center;padding:30px">
     <div style="font-size:54px">🔒</div>
     <h2 style="color:#b91c1c">WIZO OMEGA POS — Access Paused</h2>
     <p>Your free trial or subscription has ended. Please send a subscription request to WIZO OMEGA Super Admin. Your business records are not deleted.</p>
+    ${paymentInfo?`<div class="subscription-request-card" style="text-align:left"><strong>Super Admin Payment Details</strong><p style="margin:7px 0 0">Account / Bank: ${esc(paymentInfo.account_name||"—")}<br>Account Number: ${esc(paymentInfo.account_number||"—")}<br>Bank: ${esc(paymentInfo.bank_name||"—")}<br>Telephone: ${esc(paymentInfo.phone||"—")}<br>Email: ${esc(paymentInfo.email||"—")}${paymentInfo.instructions?`<br>Note: ${esc(paymentInfo.instructions)}`:""}</p></div>`:""}
     <button type="button" id="lockedRequestBtn" class="primary" style="padding:13px 22px">✉ Request Subscription</button>
     <p id="lockedRequestMsg" class="msg"></p>
     <div id="mySubscriptionRequest"></div>
@@ -702,14 +731,23 @@ async function superAdminPage(){
   if(requestResult.error)throw requestResult.error;
   requests=requestResult.data||[];
   const pendingCount=requests.filter(r=>r.status==="pending").length;
+  const savedPayment=await getSuperAdminPaymentDetails();
   $("content").innerHTML=`<div class="panel" style="border:1px solid #65a30d;background:#f0fff5;margin-bottom:14px"><h3 style="margin-bottom:5px">♛ Super Admin — Lifetime Free</h3><p class="muted" style="margin:0 0 12px">Your Super Admin account and its own business have permanent free access. No trial countdown, subscription payment, or expiry applies. This exemption is based on your verified Super Admin account.</p><button type="button" class="primary" onclick="showPage('My Restaurant')">▣ Open My Restaurant (Owner Dashboard)</button></div>
   <div class="stats"><div class="stat"><small>REGISTERED BUSINESSES</small><strong>${businesses.length}</strong></div><div class="stat"><small>ACTIVE CUSTOMER SUBSCRIPTIONS</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="active").length}</strong></div><div class="stat"><small>TRIAL BUSINESSES</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="trial").length}</strong></div><div class="stat"><small>PENDING SUBSCRIPTION REQUESTS</small><strong>${pendingCount}</strong></div></div>
+  <div class="panel"><h3>Super Admin Payment & Contact Details</h3><p class="muted">Save the account number, telephone and email customers should use to contact you or pay subscription fees. These details are shown to customer business owners.</p><form id="superAdminPaymentDetailsForm"><div class="formgrid"><div><label>Account holder / Name</label><input name="account_name" maxlength="160" placeholder="Account holder name" value="${esc(savedPayment?.account_name||"")}"></div><div><label>Bank name</label><input name="bank_name" maxlength="120" placeholder="Bank name" value="${esc(savedPayment?.bank_name||"")}"></div><div><label>Account number</label><input name="account_number" maxlength="80" placeholder="Enter account number" value="${esc(savedPayment?.account_number||"")}"></div><div><label>Telephone number</label><input name="phone" type="tel" maxlength="50" placeholder="+251..." value="${esc(savedPayment?.phone||"")}"></div><div><label>Email address</label><input name="email" type="email" maxlength="254" placeholder="payment@example.com" value="${esc(savedPayment?.email||"")}"></div><div><label>Payment instructions / note</label><input name="instructions" maxlength="500" placeholder="Optional payment instructions" value="${esc(savedPayment?.instructions||"")}"></div></div><button class="primary" type="submit" style="margin-top:12px">Save Payment & Contact Details</button><span id="superAdminPaymentDetailsMsg" class="msg"></span></form></div>
   <div class="panel"><h3>Subscription Requests (${pendingCount} pending)</h3><p class="muted">Customer business owners send requests here when their trial or subscription ends, or when they need renewal.</p>
     ${requests.length?`<div class="tablewrap"><table><thead><tr><th>Business</th><th>Request date</th><th>Message</th><th>Status</th><th>Action</th></tr></thead><tbody>${requests.map(r=>`<tr><td>${esc(r.business_name||"Business")}</td><td>${esc(fmtDate(r.created_at))}</td><td>${esc(r.request_message||"—")}</td><td><span class="status-pill ${esc(r.status)}">${esc(String(r.status||"pending").toUpperCase())}</span>${r.admin_message?`<br><small>${esc(r.admin_message)}</small>`:""}</td><td>${r.status==="pending"?`<button type="button" class="primary" data-review-request="${esc(r.id)}">Review / Activate</button> <button type="button" class="danger" data-reject-request="${esc(r.id)}">Reject</button>`:"—"}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No subscription requests have been received.</div>'}
     <div id="requestReviewPanel" class="panel hidden" style="margin-top:14px"><h3>Approve / Activate Subscription</h3><form id="requestReviewForm"><input type="hidden" name="request_id"><div id="requestReviewBusiness" class="muted"></div><div class="formgrid"><div><label>Payment amount *</label><input name="amount" type="number" min="0" step="0.01" required></div><div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div><div><label>Subscription duration (days) *</label><input name="duration_days" type="number" min="1" step="1" placeholder="e.g. 30, 90, 365" required></div><div><label>Payment reference / note</label><input name="payment_reference" maxlength="300" placeholder="Cash / bank reference / transfer ID"></div><div style="grid-column:1/-1"><label>Message to business owner (optional)</label><input name="admin_message" maxlength="500" placeholder="Your subscription is now active."></div></div><button class="primary" type="submit" style="margin-top:14px">✓ Approve & Activate Subscription</button><span id="requestReviewMsg" class="msg"></span></form></div>
   </div>
   <div class="panel"><h3>Business & Subscription Management</h3><p class="muted">Your own Super Admin business is always Lifetime Free. Set payment amount and access duration individually for customer businesses; no fixed price is applied.</p>${businesses.length?`<div class="tablewrap"><table><thead><tr><th>Business</th><th>Owner email</th><th>Status</th><th>Trial ends</th><th>Subscription ends</th><th>Current amount</th></tr></thead><tbody>${businesses.map(b=>{const isAdminOwned=String(b.owner_id||"")===String(currentUser.id);return `<tr><td>${esc(b.business_name)}</td><td>${esc(b.owner_email||"—")}</td><td>${isAdminOwned?'<strong style="color:#166534">♛ SUPER ADMIN · LIFETIME FREE</strong>':esc(statusLabel(b))}</td><td>${isAdminOwned?"Not applicable":esc(fmtDate(b.trial_ends_at))}</td><td>${isAdminOwned?"Never expires":esc(fmtDate(b.subscription_ends_at))}</td><td>${isAdminOwned?"FREE":b.subscription_amount==null?"—":esc(b.subscription_currency||"ETB")+" "+esc(b.subscription_amount)}</td></tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No businesses found.</div>'}</div>
   <div class="panel"><h3>Set / Extend Customer Business Subscription Manually</h3>${customerBusinesses.length?`<form id="adminSubscriptionForm"><label>Select business *</label><select name="business_id" required><option value="">Choose a business</option>${customerBusinesses.map(b=>`<option value="${esc(b.business_id)}">${esc(b.business_name)} — ${esc(b.owner_email||"")}</option>`).join("")}</select><div class="formgrid"><div><label>Payment amount *</label><input name="amount" type="number" min="0" step="0.01" placeholder="Enter amount" required></div><div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div><div><label>Subscription duration (days) *</label><input name="duration_days" type="number" min="1" step="1" placeholder="e.g. 30, 90, 365" required></div><div><label>Notes / payment reference</label><input name="notes" maxlength="500" placeholder="Optional payment details"></div></div><button class="primary" type="submit" style="margin-top:14px">Activate / Extend Subscription</button><span id="adminSubscriptionMsg" class="msg"></span></form>`:'<div class="empty">There are no customer businesses to activate yet. Your own Super Admin business is permanently free.</div>'}</div>`;
+  if($("superAdminPaymentDetailsForm"))$("superAdminPaymentDetailsForm").onsubmit=async e=>{
+    e.preventDefault();const btn=e.currentTarget.querySelector('button[type="submit"]');btn.disabled=true;
+    say("superAdminPaymentDetailsMsg","Saving payment and contact details…");
+    try{await saveSuperAdminPaymentDetails(e.currentTarget);say("superAdminPaymentDetailsMsg","Saved successfully. Customers can now see these details.");}
+    catch(err){say("superAdminPaymentDetailsMsg",err.message||String(err));}
+    finally{btn.disabled=false;}
+  };
   $$("[data-review-request]").forEach(btn=>btn.onclick=()=>{
     const r=requests.find(x=>String(x.id)===btn.dataset.reviewRequest);if(!r)return;
     const panel=$("requestReviewPanel");panel.classList.remove("hidden");
