@@ -130,6 +130,10 @@ async function saveSuperAdminPaymentDetails(form){
   const {error}=await db.from("wizo_super_admin_payment_details").upsert(payload,{onConflict:"id"});
   if(error)throw error;
 }
+async function getAvailableSubscriptionPlans(){
+  const {data,error}=await db.from("wizo_subscription_plans").select("id,plan_name,price,currency,duration_value,duration_unit,duration_days").eq("is_active",true).order("sort_order",{ascending:true});
+  if(error)throw error; return data||[];
+}
 async function renderOwnerSubscriptionNotice(){
   if(!business||isSuperAdmin)return;
   const status=String(business.subscription_status||"active").toLowerCase();
@@ -155,11 +159,13 @@ async function renderOwnerSubscriptionNotice(){
   }
   if(!message)return;
   const paymentInfo=await getSuperAdminPaymentDetails();
+  let availablePlans=[];try{availablePlans=await getAvailableSubscriptionPlans();}catch(err){console.warn(err);}
   $("appNotice").innerHTML=`<div class="subscription-alert ${expired?"expired":""}">
     <strong>${expired?"Subscription access needs attention":"Subscription information"}</strong>
     <p style="margin:6px 0 10px">${esc(message)}</p>
     ${paymentInfo?`<div class="subscription-request-card"><strong>Super Admin Payment Details</strong><p style="margin:7px 0 0">Account / Bank: ${esc(paymentInfo.account_name||"—")}<br>Account Number: ${esc(paymentInfo.account_number||"—")}<br>Bank: ${esc(paymentInfo.bank_name||"—")}<br>Telephone: ${esc(paymentInfo.phone||"—")}<br>Email: ${esc(paymentInfo.email||"—")}${paymentInfo.instructions?`<br>Note: ${esc(paymentInfo.instructions)}`:""}</p></div>`:""}
-    <button type="button" id="requestSubscriptionBtn" class="primary">✉ Request Subscription</button>
+    ${availablePlans.length?`<label style="display:block;margin:10px 0 5px;font-weight:700">Choose subscription plan</label><select id="customerSubscriptionPlan" style="width:100%;max-width:520px"><option value="">Select monthly or yearly plan</option>${availablePlans.map(pl=>`<option value="${esc(pl.id)}">${esc(pl.plan_name)} — ${esc(pl.currency)} ${esc(pl.price)} / ${esc(pl.duration_value)} ${esc(pl.duration_unit)}</option>`).join("")}</select>`:'<p class="muted">Subscription plans have not been published yet. Please contact Super Admin.</p>'}
+    <button type="button" id="requestSubscriptionBtn" class="primary" ${availablePlans.length?'':'disabled'}>✉ Request Subscription</button>
     <span id="subscriptionRequestMsg" class="msg"></span>
     <div id="mySubscriptionRequest"></div>
   </div>`;
@@ -188,8 +194,15 @@ async function sendSubscriptionRequest(){
   btn.disabled=true;say("subscriptionRequestMsg","Sending request to Super Admin…");
   try{
     const {data:{user},error:userError}=await db.auth.getUser();if(userError)throw userError;
+    const planId=$("customerSubscriptionPlan")?.value||"";
+    if(!planId)throw Error("Please select a subscription plan first.");
+    const chosen=await db.from("wizo_subscription_plans").select("id,plan_name,price,currency,duration_value,duration_unit,duration_days").eq("id",planId).eq("is_active",true).single();
+    if(chosen.error)throw chosen.error;
+    const pl=chosen.data;
     const {data,error}=await db.from("wizo_subscription_requests").insert({
-      business_id:business.id,requested_by:user.id,request_message:"Please contact me about subscription activation or renewal."
+      business_id:business.id,requested_by:user.id,selected_plan_id:pl.id,selected_plan_name:pl.plan_name,
+      selected_amount:pl.price,selected_currency:pl.currency,selected_duration_days:pl.duration_days,
+      request_message:`Subscription request: ${pl.plan_name} — ${pl.currency} ${pl.price} for ${pl.duration_value} ${pl.duration_unit}.`
     }).select("id,status,created_at").single();
     if(error)throw error;
     say("subscriptionRequestMsg","Your request was sent to WIZO OMEGA Super Admin.");
@@ -726,21 +739,44 @@ async function superAdminPage(){
   };
   let requests=[];
   const requestResult=await db.from("wizo_subscription_requests")
-    .select("id,business_id,requested_by,request_message,status,created_at,admin_message,business_name")
+    .select("id,business_id,requested_by,request_message,status,created_at,admin_message,business_name,selected_plan_name,selected_amount,selected_currency,selected_duration_days")
     .order("created_at",{ascending:false}).limit(200);
   if(requestResult.error)throw requestResult.error;
   requests=requestResult.data||[];
   const pendingCount=requests.filter(r=>r.status==="pending").length;
   const savedPayment=await getSuperAdminPaymentDetails();
+  const {data:subscriptionPlans=[],error:plansError}=await db.from("wizo_subscription_plans").select("*").order("sort_order",{ascending:true});
+  if(plansError)throw plansError;
   $("content").innerHTML=`<div class="panel" style="border:1px solid #65a30d;background:#f0fff5;margin-bottom:14px"><h3 style="margin-bottom:5px">♛ Super Admin — Lifetime Free</h3><p class="muted" style="margin:0 0 12px">Your Super Admin account and its own business have permanent free access. No trial countdown, subscription payment, or expiry applies. This exemption is based on your verified Super Admin account.</p><button type="button" class="primary" onclick="showPage('My Restaurant')">▣ Open My Restaurant (Owner Dashboard)</button></div>
   <div class="stats"><div class="stat"><small>REGISTERED BUSINESSES</small><strong>${businesses.length}</strong></div><div class="stat"><small>ACTIVE CUSTOMER SUBSCRIPTIONS</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="active").length}</strong></div><div class="stat"><small>TRIAL BUSINESSES</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="trial").length}</strong></div><div class="stat"><small>PENDING SUBSCRIPTION REQUESTS</small><strong>${pendingCount}</strong></div></div>
   <div class="panel"><h3>Super Admin Payment & Contact Details</h3><p class="muted">Save the account number, telephone and email customers should use to contact you or pay subscription fees. These details are shown to customer business owners.</p><form id="superAdminPaymentDetailsForm"><div class="formgrid"><div><label>Account holder / Name</label><input name="account_name" maxlength="160" placeholder="Account holder name" value="${esc(savedPayment?.account_name||"")}"></div><div><label>Bank name</label><input name="bank_name" maxlength="120" placeholder="Bank name" value="${esc(savedPayment?.bank_name||"")}"></div><div><label>Account number</label><input name="account_number" maxlength="80" placeholder="Enter account number" value="${esc(savedPayment?.account_number||"")}"></div><div><label>Telephone number</label><input name="phone" type="tel" maxlength="50" placeholder="+251..." value="${esc(savedPayment?.phone||"")}"></div><div><label>Email address</label><input name="email" type="email" maxlength="254" placeholder="payment@example.com" value="${esc(savedPayment?.email||"")}"></div><div><label>Payment instructions / note</label><input name="instructions" maxlength="500" placeholder="Optional payment instructions" value="${esc(savedPayment?.instructions||"")}"></div></div><button class="primary" type="submit" style="margin-top:12px">Save Payment & Contact Details</button><span id="superAdminPaymentDetailsMsg" class="msg"></span></form></div>
+  <div class="panel"><h3>Customer Subscription Plans</h3><p class="muted">Create monthly and yearly prices. Customers choose a plan before sending a request.</p>
+    <form id="subscriptionPlanForm"><div class="formgrid">
+      <div><label>Plan name *</label><input name="plan_name" required maxlength="100" placeholder="Monthly Plan / Yearly Plan"></div>
+      <div><label>Price *</label><input name="price" type="number" min="0" step="0.01" required placeholder="Enter price"></div>
+      <div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div>
+      <div><label>Duration *</label><div style="display:flex;gap:8px"><input name="duration_value" type="number" min="1" step="1" required placeholder="e.g. 1" style="flex:1;min-width:0"><select name="duration_unit"><option value="months" selected>Months</option><option value="years">Years</option><option value="days">Days</option></select></div></div>
+    </div><button class="primary" type="submit" style="margin-top:12px">Save Subscription Plan</button><span id="subscriptionPlanMsg" class="msg"></span></form>
+    <div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>Plan</th><th>Price</th><th>Duration</th><th>Status</th><th>Action</th></tr></thead><tbody>${subscriptionPlans.length?subscriptionPlans.map(pl=>`<tr><td>${esc(pl.plan_name)}</td><td>${esc(pl.currency)} ${esc(pl.price)}</td><td>${esc(pl.duration_value)} ${esc(pl.duration_unit)}</td><td>${pl.is_active?"Active":"Inactive"}</td><td><button type="button" class="secondary" data-toggle-plan="${esc(pl.id)}" data-active="${pl.is_active?"true":"false"}">${pl.is_active?"Deactivate":"Activate"}</button></td></tr>`).join(""):'<tr><td colspan="5">No plans saved yet.</td></tr>'}</tbody></table></div>
+  </div>
   <div class="panel"><h3>Subscription Requests (${pendingCount} pending)</h3><p class="muted">Customer business owners send requests here when their trial or subscription ends, or when they need renewal.</p>
-    ${requests.length?`<div class="tablewrap"><table><thead><tr><th>Business</th><th>Request date</th><th>Message</th><th>Status</th><th>Action</th></tr></thead><tbody>${requests.map(r=>`<tr><td>${esc(r.business_name||"Business")}</td><td>${esc(fmtDate(r.created_at))}</td><td>${esc(r.request_message||"—")}</td><td><span class="status-pill ${esc(r.status)}">${esc(String(r.status||"pending").toUpperCase())}</span>${r.admin_message?`<br><small>${esc(r.admin_message)}</small>`:""}</td><td>${r.status==="pending"?`<button type="button" class="primary" data-review-request="${esc(r.id)}">Review / Activate</button> <button type="button" class="danger" data-reject-request="${esc(r.id)}">Reject</button>`:"—"}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No subscription requests have been received.</div>'}
+    ${requests.length?`<div class="tablewrap"><table><thead><tr><th>Business</th><th>Request date</th><th>Message</th><th>Status</th><th>Action</th></tr></thead><tbody>${requests.map(r=>`<tr><td>${esc(r.business_name||"Business")}</td><td>${esc(fmtDate(r.created_at))}</td><td>${esc(r.request_message||"—")}${r.selected_plan_name?`<br><strong>Selected: ${esc(r.selected_plan_name)} · ${esc(r.selected_currency)} ${esc(r.selected_amount)}</strong>`:""}</td><td><span class="status-pill ${esc(r.status)}">${esc(String(r.status||"pending").toUpperCase())}</span>${r.admin_message?`<br><small>${esc(r.admin_message)}</small>`:""}</td><td>${r.status==="pending"?`<button type="button" class="primary" data-review-request="${esc(r.id)}">Review / Activate</button> <button type="button" class="danger" data-reject-request="${esc(r.id)}">Reject</button>`:"—"}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No subscription requests have been received.</div>'}
     <div id="requestReviewPanel" class="panel hidden" style="margin-top:14px"><h3>Approve / Activate Subscription</h3><form id="requestReviewForm"><input type="hidden" name="request_id"><div id="requestReviewBusiness" class="muted"></div><div class="formgrid"><div><label>Payment amount *</label><input name="amount" type="number" min="0" step="0.01" required></div><div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div><div><label>Subscription duration *</label><div style="display:flex;gap:8px"><input name="duration_value" type="number" min="1" step="1" placeholder="Enter duration" required style="flex:1;min-width:0"><select name="duration_unit" required style="flex:1"><option value="days">Days</option><option value="months" selected>Months</option><option value="years">Years</option></select></div></div><div><label>Payment reference / note</label><input name="payment_reference" maxlength="300" placeholder="Cash / bank reference / transfer ID"></div><div style="grid-column:1/-1"><label>Message to business owner (optional)</label><input name="admin_message" maxlength="500" placeholder="Your subscription is now active."></div></div><button class="primary" type="submit" style="margin-top:14px">✓ Approve & Activate Subscription</button><span id="requestReviewMsg" class="msg"></span></form></div>
   </div>
   <div class="panel"><h3>Business & Subscription Management</h3><p class="muted">Your own Super Admin business is always Lifetime Free. Set payment amount and access duration individually for customer businesses; no fixed price is applied.</p>${businesses.length?`<div class="tablewrap"><table><thead><tr><th>Business</th><th>Owner email</th><th>Status</th><th>Trial ends</th><th>Subscription ends</th><th>Current amount</th></tr></thead><tbody>${businesses.map(b=>{const isAdminOwned=String(b.owner_id||"")===String(currentUser.id);return `<tr><td>${esc(b.business_name)}</td><td>${esc(b.owner_email||"—")}</td><td>${isAdminOwned?'<strong style="color:#166534">♛ SUPER ADMIN · LIFETIME FREE</strong>':esc(statusLabel(b))}</td><td>${isAdminOwned?"Not applicable":esc(fmtDate(b.trial_ends_at))}</td><td>${isAdminOwned?"Never expires":esc(fmtDate(b.subscription_ends_at))}</td><td>${isAdminOwned?"FREE":b.subscription_amount==null?"—":esc(b.subscription_currency||"ETB")+" "+esc(b.subscription_amount)}</td></tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No businesses found.</div>'}</div>
   <div class="panel"><h3>Set / Extend Customer Business Subscription Manually</h3>${customerBusinesses.length?`<form id="adminSubscriptionForm"><label>Select business *</label><select name="business_id" required><option value="">Choose a business</option>${customerBusinesses.map(b=>`<option value="${esc(b.business_id)}">${esc(b.business_name)} — ${esc(b.owner_email||"")}</option>`).join("")}</select><div class="formgrid"><div><label>Payment amount *</label><input name="amount" type="number" min="0" step="0.01" placeholder="Enter amount" required></div><div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div><div><label>Subscription duration *</label><div style="display:flex;gap:8px"><input name="duration_value" type="number" min="1" step="1" placeholder="Enter duration" required style="flex:1;min-width:0"><select name="duration_unit" required style="flex:1"><option value="days">Days</option><option value="months" selected>Months</option><option value="years">Years</option></select></div></div><div><label>Notes / payment reference</label><input name="notes" maxlength="500" placeholder="Optional payment details"></div></div><button class="primary" type="submit" style="margin-top:14px">Activate / Extend Subscription</button><span id="adminSubscriptionMsg" class="msg"></span></form>`:'<div class="empty">There are no customer businesses to activate yet. Your own Super Admin business is permanently free.</div>'}</div>`;
+  if($("subscriptionPlanForm"))$("subscriptionPlanForm").onsubmit=async e=>{
+    e.preventDefault();const f=new FormData(e.currentTarget),v=Number(f.get("duration_value")),unit=String(f.get("duration_unit")||"months"),price=Number(f.get("price"));
+    const days=v*(unit==="years"?365:unit==="months"?30:1);
+    if(!Number.isInteger(v)||v<1||!Number.isFinite(price)||price<0){say("subscriptionPlanMsg","Enter a valid price and duration.");return;}
+    const btn=e.currentTarget.querySelector('button[type="submit"]');btn.disabled=true;
+    try{const {error}=await db.from("wizo_subscription_plans").insert({plan_name:String(f.get("plan_name")).trim(),price,currency:String(f.get("currency")||"ETB"),duration_value:v,duration_unit:unit,duration_days:days,is_active:true});if(error)throw error;await superAdminPage();}
+    catch(err){say("subscriptionPlanMsg",err.message||String(err));btn.disabled=false;}
+  };
+  $$("[data-toggle-plan]").forEach(btn=>btn.onclick=async()=>{
+    btn.disabled=true;try{const {error}=await db.from("wizo_subscription_plans").update({is_active:btn.dataset.active!=="true"}).eq("id",btn.dataset.togglePlan);if(error)throw error;await superAdminPage();}
+    catch(err){alert(err.message||String(err));btn.disabled=false;}
+  });
   if($("superAdminPaymentDetailsForm"))$("superAdminPaymentDetailsForm").onsubmit=async e=>{
     e.preventDefault();const btn=e.currentTarget.querySelector('button[type="submit"]');btn.disabled=true;
     say("superAdminPaymentDetailsMsg","Saving payment and contact details…");
@@ -752,7 +788,8 @@ async function superAdminPage(){
     const r=requests.find(x=>String(x.id)===btn.dataset.reviewRequest);if(!r)return;
     const panel=$("requestReviewPanel");panel.classList.remove("hidden");
     const f=$("requestReviewForm");f.elements.request_id.value=r.id;
-    $("requestReviewBusiness").textContent=`Business: ${r.business_name||"Business"} · Request: ${fmtDate(r.created_at)}`;
+    $("requestReviewBusiness").textContent=`Business: ${r.business_name||"Business"} · Request: ${fmtDate(r.created_at)} · Selected plan: ${r.selected_plan_name||"Not selected"}`;
+    if(r.selected_plan_name){f.elements.amount.value=r.selected_amount??"";f.elements.currency.value=r.selected_currency||"ETB";f.elements.duration_value.value=r.selected_duration_days||30;f.elements.duration_unit.value="days";}
     panel.scrollIntoView({behavior:"smooth",block:"center"});
   });
   $$("[data-reject-request]").forEach(btn=>btn.onclick=async()=>{
