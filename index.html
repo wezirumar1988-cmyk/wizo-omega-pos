@@ -19,6 +19,12 @@
 .recall-actions{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;margin-top:18px}.recall-actions button{min-width:100px}
 @media(max-width:480px){.recall-dialog{padding:16px}.recall-dialog h2{font-size:20px}}
 
+
+.subscription-alert{background:#fff7df;border:1px solid #eab308;color:#713f12;border-radius:11px;padding:14px;margin-bottom:13px}
+.subscription-alert.expired{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+.subscription-request-card{background:#f0fff5;border:1px solid #86cda0;border-radius:11px;padding:14px;margin-top:12px}
+.status-pill{display:inline-block;padding:4px 9px;border-radius:20px;font-size:12px;font-weight:800;background:#fef3c7;color:#92400e}
+.status-pill.approved{background:#dcfce7;color:#166534}.status-pill.rejected{background:#fee2e2;color:#991b1b}
 </style>
 </head>
 <body>
@@ -99,7 +105,7 @@ function applyRoleAccess(){
   if(!allowed.includes(pageNow))pageNow=isSuperAdmin&&!adminRestaurantMode?"Super Admin":"POS";
 }
 function showNotice(msg){$("appNotice").innerHTML=msg?`<div class="notice">${esc(msg)}</div>`:""}
-function renderOwnerSubscriptionNotice(){
+async function renderOwnerSubscriptionNotice(){
   if(!business||isSuperAdmin)return;
   const status=String(business.subscription_status||"active").toLowerCase();
   const now=new Date();
@@ -107,25 +113,107 @@ function renderOwnerSubscriptionNotice(){
   const paidEnd=business.subscription_ends_at?new Date(business.subscription_ends_at):null;
   const fmt=d=>d&&!Number.isNaN(d.getTime())?d.toLocaleString():"";
   let message="";
+  let expired=false;
   if(status==="trial"){
-    if(trialEnd&&trialEnd<=now)message="Your 5-day free trial has expired. Please contact WIZO OMEGA Super Admin to activate your subscription.";
-    else if(trialEnd){const days=Math.max(0,Math.ceil((trialEnd-now)/86400000));message=`Free trial active · ${days} day(s) remaining · Ends ${fmt(trialEnd)}. Contact Super Admin to arrange your subscription.`;}
-    else message="Your account is on a free trial. Contact WIZO OMEGA Super Admin for subscription details.";
+    if(trialEnd&&trialEnd<=now){message="Your 5-day free trial has expired. Request a subscription from WIZO OMEGA Super Admin.";expired=true;}
+    else if(trialEnd){const days=Math.max(0,Math.ceil((trialEnd-now)/86400000));message=`Free trial active · ${days} day(s) remaining · Ends ${fmt(trialEnd)}.`;}
+    else message="Your account is on a free trial.";
   }else if(status==="active"&&paidEnd&&paidEnd<=now){
-    message="Your subscription has expired. Please contact WIZO OMEGA Super Admin to renew access.";
+    message="Your subscription has expired. Request renewal from WIZO OMEGA Super Admin.";expired=true;
   }else if(status==="active"&&paidEnd){
     const days=Math.ceil((paidEnd-now)/86400000);
-    if(days<=7)message=`Subscription renewal reminder · ${Math.max(0,days)} day(s) remaining · Ends ${fmt(paidEnd)}. Contact Super Admin to renew.`;
+    if(days<=7)message=`Subscription renewal reminder · ${Math.max(0,days)} day(s) remaining · Ends ${fmt(paidEnd)}.`;
   }else if(status==="suspended"){
-    message="This business account is suspended. Please contact WIZO OMEGA Super Admin.";
+    message="This business account is suspended. Please contact WIZO OMEGA Super Admin.";expired=true;
   }else if(status!=="active"){
-    message=`Subscription status: ${status}. Please contact WIZO OMEGA Super Admin.`;
+    message=`Subscription status: ${status}. Please contact WIZO OMEGA Super Admin.`;expired=true;
   }
-  if(message)$("appNotice").innerHTML=`<div class="notice">${esc(message)}</div>`;
+  if(!message)return;
+  $("appNotice").innerHTML=`<div class="subscription-alert ${expired?"expired":""}">
+    <strong>${expired?"Subscription access needs attention":"Subscription information"}</strong>
+    <p style="margin:6px 0 10px">${esc(message)}</p>
+    <button type="button" id="requestSubscriptionBtn" class="primary">✉ Request Subscription</button>
+    <span id="subscriptionRequestMsg" class="msg"></span>
+    <div id="mySubscriptionRequest"></div>
+  </div>`;
+  await loadMySubscriptionRequest();
+  const btn=$("requestSubscriptionBtn");
+  if(btn)btn.onclick=sendSubscriptionRequest;
 }
+async function loadMySubscriptionRequest(){
+  const box=$("mySubscriptionRequest");if(!box||!business)return;
+  try{
+    const {data,error}=await db.from("wizo_subscription_requests")
+      .select("id,status,request_message,created_at,admin_message")
+      .eq("business_id",business.id).order("created_at",{ascending:false}).limit(5);
+    if(error)throw error;
+    const rows=data||[];
+    if(!rows.length){box.innerHTML="";return;}
+    box.innerHTML=`<div class="subscription-request-card"><strong>My Subscription Requests</strong>
+      ${rows.map(r=>`<p style="margin:8px 0 0"> <span class="status-pill ${esc(r.status)}">${esc(String(r.status||"pending").toUpperCase())}</span> · ${r.created_at?new Date(r.created_at).toLocaleString():""}${r.request_message?`<br>${esc(r.request_message)}`:""}${r.admin_message?`<br><small>Super Admin: ${esc(r.admin_message)}</small>`:""}</p>`).join("")}
+    </div>`;
+    const pending=rows.some(r=>r.status==="pending");
+    if($("requestSubscriptionBtn")){$("requestSubscriptionBtn").disabled=pending;$("requestSubscriptionBtn").textContent=pending?"Request Pending":"✉ Request Subscription";}
+  }catch(err){box.innerHTML=`<small>Could not load request status: ${esc(err.message||err)}</small>`;}
+}
+async function sendSubscriptionRequest(){
+  const btn=$("requestSubscriptionBtn");if(!btn||!business)return;
+  btn.disabled=true;say("subscriptionRequestMsg","Sending request to Super Admin…");
+  try{
+    const {data:{user},error:userError}=await db.auth.getUser();if(userError)throw userError;
+    const {data,error}=await db.from("wizo_subscription_requests").insert({
+      business_id:business.id,requested_by:user.id,request_message:"Please contact me about subscription activation or renewal."
+    }).select("id,status,created_at").single();
+    if(error)throw error;
+    say("subscriptionRequestMsg","Your request was sent to WIZO OMEGA Super Admin.");
+    await loadMySubscriptionRequest();
+  }catch(err){
+    say("subscriptionRequestMsg",err.message||"Could not send request. Please try again.");
+    btn.disabled=false;
+  }
+}
+
+function businessSubscriptionBlocked(){
+  if(!business||isSuperAdmin)return false;
+  const status=String(business.subscription_status||"active").toLowerCase();
+  const now=Date.now();
+  if(status==="suspended")return true;
+  if(status==="trial")return !!business.trial_ends_at && new Date(business.trial_ends_at).getTime()<=now;
+  if(status==="active"&&business.subscription_ends_at)return new Date(business.subscription_ends_at).getTime()<=now;
+  return status!=="active"&&status!=="trial";
+}
+async function renderSubscriptionLockedPage(){
+  pageNow="Subscription Expired";
+  $("pageTitle").textContent="Subscription Expired";
+  document.querySelectorAll("#nav button").forEach(b=>b.classList.remove("active"));
+  $("content").innerHTML=`<div class="panel" style="max-width:760px;margin:35px auto;text-align:center;padding:30px">
+    <div style="font-size:54px">🔒</div>
+    <h2 style="color:#b91c1c">WIZO OMEGA POS — Access Paused</h2>
+    <p>Your free trial or subscription has ended. Please send a subscription request to WIZO OMEGA Super Admin. Your business records are not deleted.</p>
+    <button type="button" id="lockedRequestBtn" class="primary" style="padding:13px 22px">✉ Request Subscription</button>
+    <p id="lockedRequestMsg" class="msg"></p>
+    <div id="mySubscriptionRequest"></div>
+    <p class="muted" style="margin-top:15px">After the Super Admin approves your request and activates the subscription, sign in again to continue.</p>
+    <button type="button" id="lockedSignOut" style="margin-top:8px">Sign out</button>
+  </div>`;
+  await loadMySubscriptionRequest();
+  $("lockedRequestBtn").onclick=async()=>{
+    const btn=$("lockedRequestBtn");btn.disabled=true;say("lockedRequestMsg","Sending request…");
+    try{
+      const {data:{user},error:userError}=await db.auth.getUser();if(userError)throw userError;
+      const {error}=await db.from("wizo_subscription_requests").insert({business_id:business.id,requested_by:user.id,request_message:"My trial/subscription has ended. Please contact me to renew access."});
+      if(error)throw error;
+      say("lockedRequestMsg","Request sent to Super Admin successfully.");
+      await loadMySubscriptionRequest();
+    }catch(err){say("lockedRequestMsg",err.message||"Could not send request.");btn.disabled=false;}
+  };
+  $("lockedSignOut").onclick=()=>$("logout").click();
+}
+
 async function showPage(p){
   if(p==="Super Admin"&&!isSuperAdmin){showNotice("Super Admin access required.");p="Dashboard";}
   if(p==="My Restaurant"&&isSuperAdmin){await enterAdminRestaurant();return;}
+  if(!isSuperAdmin&&businessSubscriptionBlocked()){await renderSubscriptionLockedPage();return;}
   if(p==="Super Admin"&&isSuperAdmin){adminRestaurantMode=false;business=null;currentRole="super_admin";$("businessChip").textContent="WIZO OMEGA · SUPER ADMIN";applyRoleAccess();}
   else if(isSuperAdmin&&!adminRestaurantMode){p="Super Admin";}
   const cashierAllowed=["Dashboard","POS","Sales","Reports","End of Day"];
@@ -133,7 +221,7 @@ async function showPage(p){
   pageNow=p;$("pageTitle").textContent=p;
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));
   showNotice("");
-  if(!isSuperAdmin)renderOwnerSubscriptionNotice();
+  if(!isSuperAdmin)await renderOwnerSubscriptionNotice();
   try{if(p==="Super Admin")await superAdminPage();else if(p==="Dashboard")await dashboard();else if(p==="POS")await renderPOS();else if(p==="Products")await productsPage();else if(p==="Purchases")await purchasesPage();else if(p==="Expenses")await expensesPage();else if(p==="Customers")await simpleDirectory("Customers");else if(p==="Suppliers")await simpleDirectory("Suppliers");else if(p==="Sales")await salesPage();else if(p==="Reports")await reportsPage();else if(p==="End of Day")await endOfDayPage();else if(p==="Cashier Management")await cashierManagementPage();else if(p==="Employees")await employeesPage();else if(p==="Budget")await budgetPage();else if(p==="Settings")settingsPage()}
   catch(err){showNotice(err.message||String(err));$("content").innerHTML=`<div class="panel"><h3>Unable to load this page</h3><p>${esc(err.message||String(err))}</p></div>`}
 }
@@ -598,8 +686,6 @@ async function superAdminPage(){
   const {data:rows,error}=await db.rpc("wizo_admin_list_subscriptions");
   if(error)throw error;
   const businesses=rows||[];
-  // The signed-in Super Admin's own business is permanently exempt from paid subscriptions.
-  // Match by owner_id (auth user UUID), not by a display email or business name.
   const adminOwnedBusinesses=businesses.filter(b=>String(b.owner_id||"")===String(currentUser.id));
   const customerBusinesses=businesses.filter(b=>String(b.owner_id||"")!==String(currentUser.id));
   const fmtDate=v=>v?new Date(v).toLocaleString():"—";
@@ -609,13 +695,47 @@ async function superAdminPage(){
     if(b.subscription_status==="active"&&b.subscription_ends_at&&new Date(b.subscription_ends_at)<new Date())return "expired";
     return b.subscription_status||"unknown";
   };
+  let requests=[];
+  const requestResult=await db.from("wizo_subscription_requests")
+    .select("id,business_id,requested_by,request_message,status,created_at,admin_message,business_name")
+    .order("created_at",{ascending:false}).limit(200);
+  if(requestResult.error)throw requestResult.error;
+  requests=requestResult.data||[];
+  const pendingCount=requests.filter(r=>r.status==="pending").length;
   $("content").innerHTML=`<div class="panel" style="border:1px solid #65a30d;background:#f0fff5;margin-bottom:14px"><h3 style="margin-bottom:5px">♛ Super Admin — Lifetime Free</h3><p class="muted" style="margin:0 0 12px">Your Super Admin account and its own business have permanent free access. No trial countdown, subscription payment, or expiry applies. This exemption is based on your verified Super Admin account.</p><button type="button" class="primary" onclick="showPage('My Restaurant')">▣ Open My Restaurant (Owner Dashboard)</button></div>
-  <div class="stats"><div class="stat"><small>REGISTERED BUSINESSES</small><strong>${businesses.length}</strong></div><div class="stat"><small>ACTIVE CUSTOMER SUBSCRIPTIONS</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="active").length}</strong></div><div class="stat"><small>TRIAL BUSINESSES</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="trial").length}</strong></div><div class="stat"><small>EXPIRED / NEEDS REVIEW</small><strong>${customerBusinesses.filter(b=>["expired","trial expired"].includes(statusLabel(b))).length}</strong></div></div>
+  <div class="stats"><div class="stat"><small>REGISTERED BUSINESSES</small><strong>${businesses.length}</strong></div><div class="stat"><small>ACTIVE CUSTOMER SUBSCRIPTIONS</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="active").length}</strong></div><div class="stat"><small>TRIAL BUSINESSES</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="trial").length}</strong></div><div class="stat"><small>PENDING SUBSCRIPTION REQUESTS</small><strong>${pendingCount}</strong></div></div>
+  <div class="panel"><h3>Subscription Requests (${pendingCount} pending)</h3><p class="muted">Customer business owners send requests here when their trial or subscription ends, or when they need renewal.</p>
+    ${requests.length?`<div class="tablewrap"><table><thead><tr><th>Business</th><th>Request date</th><th>Message</th><th>Status</th><th>Action</th></tr></thead><tbody>${requests.map(r=>`<tr><td>${esc(r.business_name||"Business")}</td><td>${esc(fmtDate(r.created_at))}</td><td>${esc(r.request_message||"—")}</td><td><span class="status-pill ${esc(r.status)}">${esc(String(r.status||"pending").toUpperCase())}</span>${r.admin_message?`<br><small>${esc(r.admin_message)}</small>`:""}</td><td>${r.status==="pending"?`<button type="button" class="primary" data-review-request="${esc(r.id)}">Review / Activate</button> <button type="button" class="danger" data-reject-request="${esc(r.id)}">Reject</button>`:"—"}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">No subscription requests have been received.</div>'}
+    <div id="requestReviewPanel" class="panel hidden" style="margin-top:14px"><h3>Approve / Activate Subscription</h3><form id="requestReviewForm"><input type="hidden" name="request_id"><div id="requestReviewBusiness" class="muted"></div><div class="formgrid"><div><label>Payment amount *</label><input name="amount" type="number" min="0" step="0.01" required></div><div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div><div><label>Subscription duration (days) *</label><input name="duration_days" type="number" min="1" step="1" placeholder="e.g. 30, 90, 365" required></div><div><label>Payment reference / note</label><input name="payment_reference" maxlength="300" placeholder="Cash / bank reference / transfer ID"></div><div style="grid-column:1/-1"><label>Message to business owner (optional)</label><input name="admin_message" maxlength="500" placeholder="Your subscription is now active."></div></div><button class="primary" type="submit" style="margin-top:14px">✓ Approve & Activate Subscription</button><span id="requestReviewMsg" class="msg"></span></form></div>
+  </div>
   <div class="panel"><h3>Business & Subscription Management</h3><p class="muted">Your own Super Admin business is always Lifetime Free. Set payment amount and access duration individually for customer businesses; no fixed price is applied.</p>${businesses.length?`<div class="tablewrap"><table><thead><tr><th>Business</th><th>Owner email</th><th>Status</th><th>Trial ends</th><th>Subscription ends</th><th>Current amount</th></tr></thead><tbody>${businesses.map(b=>{const isAdminOwned=String(b.owner_id||"")===String(currentUser.id);return `<tr><td>${esc(b.business_name)}</td><td>${esc(b.owner_email||"—")}</td><td>${isAdminOwned?'<strong style="color:#166534">♛ SUPER ADMIN · LIFETIME FREE</strong>':esc(statusLabel(b))}</td><td>${isAdminOwned?"Not applicable":esc(fmtDate(b.trial_ends_at))}</td><td>${isAdminOwned?"Never expires":esc(fmtDate(b.subscription_ends_at))}</td><td>${isAdminOwned?"FREE":b.subscription_amount==null?"—":esc(b.subscription_currency||"ETB")+" "+esc(b.subscription_amount)}</td></tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No businesses found.</div>'}</div>
-  <div class="panel"><h3>Set / Extend Customer Business Subscription</h3>${customerBusinesses.length?`<form id="adminSubscriptionForm"><label>Select business *</label><select name="business_id" required><option value="">Choose a business</option>${customerBusinesses.map(b=>`<option value="${esc(b.business_id)}">${esc(b.business_name)} — ${esc(b.owner_email||"")}</option>`).join("")}</select><div class="formgrid"><div><label>Payment amount *</label><input name="amount" type="number" min="0" step="0.01" placeholder="Enter amount" required></div><div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div><div><label>Subscription duration (days) *</label><input name="duration_days" type="number" min="1" step="1" placeholder="e.g. 30, 90, 365" required></div><div><label>Notes / payment reference</label><input name="notes" maxlength="500" placeholder="Optional payment details"></div></div><button class="primary" type="submit" style="margin-top:14px">Activate / Extend Subscription</button><span id="adminSubscriptionMsg" class="msg"></span></form>`:'<div class="empty">There are no customer businesses to activate yet. Your own Super Admin business is permanently free.</div>'}</div>`;
-  $("adminSubscriptionForm").onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),businessId=String(f.get("business_id")||""),amount=Number(f.get("amount")),days=Number(f.get("duration_days"));if(!businessId||!Number.isFinite(amount)||amount<0||!Number.isInteger(days)||days<1){say("adminSubscriptionMsg","Please enter a business, valid amount and duration.");return;}const btn=e.currentTarget.querySelector('button[type="submit"]');btn.disabled=true;say("adminSubscriptionMsg","Saving subscription securely…");try{const {data,error}=await db.rpc("wizo_admin_set_subscription",{p_business_id:businessId,p_amount:amount,p_currency:String(f.get("currency")||"ETB"),p_duration_days:days,p_notes:String(f.get("notes")||"").trim()||null});if(error)throw error;say("adminSubscriptionMsg","Subscription activated. End date: "+new Date(data.subscription_ends_at).toLocaleString());await superAdminPage();}catch(err){say("adminSubscriptionMsg",err.message||String(err));}finally{if(btn.isConnected)btn.disabled=false;}};
+  <div class="panel"><h3>Set / Extend Customer Business Subscription Manually</h3>${customerBusinesses.length?`<form id="adminSubscriptionForm"><label>Select business *</label><select name="business_id" required><option value="">Choose a business</option>${customerBusinesses.map(b=>`<option value="${esc(b.business_id)}">${esc(b.business_name)} — ${esc(b.owner_email||"")}</option>`).join("")}</select><div class="formgrid"><div><label>Payment amount *</label><input name="amount" type="number" min="0" step="0.01" placeholder="Enter amount" required></div><div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div><div><label>Subscription duration (days) *</label><input name="duration_days" type="number" min="1" step="1" placeholder="e.g. 30, 90, 365" required></div><div><label>Notes / payment reference</label><input name="notes" maxlength="500" placeholder="Optional payment details"></div></div><button class="primary" type="submit" style="margin-top:14px">Activate / Extend Subscription</button><span id="adminSubscriptionMsg" class="msg"></span></form>`:'<div class="empty">There are no customer businesses to activate yet. Your own Super Admin business is permanently free.</div>'}</div>`;
+  $$("[data-review-request]").forEach(btn=>btn.onclick=()=>{
+    const r=requests.find(x=>String(x.id)===btn.dataset.reviewRequest);if(!r)return;
+    const panel=$("requestReviewPanel");panel.classList.remove("hidden");
+    const f=$("requestReviewForm");f.elements.request_id.value=r.id;
+    $("requestReviewBusiness").textContent=`Business: ${r.business_name||"Business"} · Request: ${fmtDate(r.created_at)}`;
+    panel.scrollIntoView({behavior:"smooth",block:"center"});
+  });
+  $$("[data-reject-request]").forEach(btn=>btn.onclick=async()=>{
+    const r=requests.find(x=>String(x.id)===btn.dataset.rejectRequest);if(!r||!confirm("Reject this subscription request?"))return;
+    btn.disabled=true;
+    try{const {data,error}=await db.rpc("wizo_admin_review_subscription_request",{p_request_id:r.id,p_decision:"rejected",p_amount:null,p_currency:null,p_duration_days:null,p_payment_reference:null,p_admin_message:"Please contact WIZO OMEGA Super Admin for details."});if(error)throw error;await superAdminPage();}
+    catch(err){alert("Could not reject request: "+(err.message||err));btn.disabled=false;}
+  });
+  if($("requestReviewForm"))$("requestReviewForm").onsubmit=async e=>{
+    e.preventDefault();const f=new FormData(e.currentTarget),amount=Number(f.get("amount")),days=Number(f.get("duration_days"));
+    if(!Number.isFinite(amount)||amount<0||!Number.isInteger(days)||days<1){say("requestReviewMsg","Enter a valid payment amount and duration.");return;}
+    const btn=e.currentTarget.querySelector('button[type="submit"]');btn.disabled=true;say("requestReviewMsg","Approving request and activating subscription…");
+    try{
+      const {data,error}=await db.rpc("wizo_admin_review_subscription_request",{p_request_id:String(f.get("request_id")),p_decision:"approved",p_amount:amount,p_currency:String(f.get("currency")||"ETB"),p_duration_days:days,p_payment_reference:String(f.get("payment_reference")||"").trim()||null,p_admin_message:String(f.get("admin_message")||"").trim()||"Your subscription is active. Thank you."});
+      if(error)throw error;
+      say("requestReviewMsg","Approved. Subscription activated until "+new Date(data.subscription_ends_at).toLocaleString());
+      await superAdminPage();
+    }catch(err){say("requestReviewMsg",err.message||String(err));btn.disabled=false;}
+  };
+  if($("adminSubscriptionForm"))$("adminSubscriptionForm").onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),businessId=String(f.get("business_id")||""),amount=Number(f.get("amount")),days=Number(f.get("duration_days"));if(!businessId||!Number.isFinite(amount)||amount<0||!Number.isInteger(days)||days<1){say("adminSubscriptionMsg","Please enter a business, valid amount and duration.");return;}const btn=e.currentTarget.querySelector('button[type="submit"]');btn.disabled=true;say("adminSubscriptionMsg","Saving subscription securely…");try{const {data,error}=await db.rpc("wizo_admin_set_subscription",{p_business_id:businessId,p_amount:amount,p_currency:String(f.get("currency")||"ETB"),p_duration_days:days,p_notes:String(f.get("notes")||"").trim()||null});if(error)throw error;say("adminSubscriptionMsg","Subscription activated. End date: "+new Date(data.subscription_ends_at).toLocaleString());await superAdminPage();}catch(err){say("adminSubscriptionMsg",err.message||String(err));}finally{if(btn.isConnected)btn.disabled=false;}};
 }
-
 function settingsPage(){$("content").innerHTML=`<div class="panel"><h3>Business / receipt settings</h3><form id="settingsForm"><div class="formgrid"><div><label>Business name</label><input name="name" required value="${esc(profile.name||"")}"></div><div><label>Phone</label><input name="phone" value="${esc(profile.phone||"")}"></div><div><label>Address</label><input name="address" value="${esc(profile.address||"")}"></div><div><label>Currency</label><select name="currency"><option ${profile.currency==="ETB"?"selected":""}>ETB</option><option ${profile.currency==="SAR"?"selected":""}>SAR</option><option ${profile.currency==="USD"?"selected":""}>USD</option></select></div><div style="grid-column:1/-1"><label>Logo image URL (optional)</label><input name="logo_url" value="${esc(profile.logo_url||"")}"></div></div><button class="primary" style="margin-top:14px">Save settings</button><span id="settingsMsg" class="msg"></span></form><p class="muted">These details are used on receipts. The logo URL must be a publicly accessible image URL.</p></div>
 <div class="panel"><h3>Backup & Restore Data</h3><p class="muted">Download a backup of this business data or restore from a WIZO OMEGA POS JSON backup file.</p><button type="button" class="primary" id="backupDataBtn">Download Backup</button> <label for="restoreDataFile" class="btn">Choose backup file</label><input id="restoreDataFile" type="file" accept=".json,application/json" style="display:none"><button type="button" id="restoreDataBtn">Restore Data</button><span id="dataToolsMsg" class="msg"></span></div>
 <div class="panel"><h3>Delete Business Data</h3><p class="muted">This permanently deletes sales, purchases and purchase items, expenses, employees, products/menu items, customers, suppliers, and all cloud budget amounts/history for this business. Business name, business settings, and login account are kept. Download a backup first.</p><label>Type DELETE to confirm</label><input id="deleteDataConfirm" placeholder="DELETE"><button type="button" id="deleteDataBtn" style="margin-top:10px;background:#b91c1c;color:white">Delete Data</button><span id="deleteDataMsg" class="msg"></span></div>`;
