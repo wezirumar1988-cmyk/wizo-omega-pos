@@ -23,13 +23,13 @@
 </head>
 <body>
 <section id="auth" class="auth"><div class="authcard"><div class="logo">WΩ</div><p class="gold" style="margin-top:16px;letter-spacing:2px;font-size:11px">SALES · RESTAURANT · BUSINESS</p><h1>WIZO <span class="gold">OMEGA POS</span></h1><p class="muted">Manage your business from one place.</p><div class="tabs"><button id="signinTab" class="active" type="button">Sign in</button><button id="signupTab" type="button">Create account</button></div><form id="authForm"><div id="businessField" class="hidden"><label>Business / Restaurant name</label><input id="businessName" autocomplete="organization" placeholder="Your business name"></div><label>Email</label><input id="email" type="email" required autocomplete="email" placeholder="you@example.com"><label>Password</label><input id="password" type="password" required minlength="8" autocomplete="current-password" placeholder="At least 8 characters"><button id="authSubmit" class="primary" style="width:100%;margin-top:16px" type="submit">Sign in</button><div id="authMsg" class="msg"></div></form></div></section>
-<div id="shell" class="shell" hidden><aside><div class="brand">WΩ WIZO OMEGA</div><nav id="nav"><button data-page="Dashboard" class="active">▦ Dashboard</button><button data-page="POS">▣ POS / New Sale</button><button data-page="Products">◫ Menu</button><button data-page="Purchases">⇩ Purchases</button><button data-page="Expenses">↗ Expenses</button><button data-page="Customers">♙ Customers</button><button data-page="Suppliers">♧ Suppliers</button><button data-page="Sales">▤ Sales History</button><button data-page="Reports">▥ Reports</button><button data-page="End of Day">▣ End of Day</button><button data-page="Cashier Management">♙ Cashier Management</button><button data-page="Employees">♧ Employees</button><button data-page="Budget">▤ Budget</button><button data-page="Settings">⚙ Settings</button><button data-page="Super Admin" hidden>♛ Super Admin</button></nav></aside><main class="main"><div class="topbar"><div><p class="gold" style="font-size:10px;letter-spacing:2px;margin-bottom:4px">BUSINESS MANAGEMENT</p><h2 id="pageTitle">Dashboard</h2></div><div class="topbar-actions"><span id="businessChip" class="chip">My Business</span><button id="logout" class="top-logout" type="button">↪ Sign out</button></div></div><div id="appNotice"></div><section id="content"></section></main></div>
+<div id="shell" class="shell" hidden><aside><div class="brand">WΩ WIZO OMEGA</div><nav id="nav"><button data-page="Dashboard" class="active">▦ Dashboard</button><button data-page="POS">▣ POS / New Sale</button><button data-page="Products">◫ Menu</button><button data-page="Purchases">⇩ Purchases</button><button data-page="Expenses">↗ Expenses</button><button data-page="Customers">♙ Customers</button><button data-page="Suppliers">♧ Suppliers</button><button data-page="Sales">▤ Sales History</button><button data-page="Reports">▥ Reports</button><button data-page="End of Day">▣ End of Day</button><button data-page="Cashier Management">♙ Cashier Management</button><button data-page="Employees">♧ Employees</button><button data-page="Budget">▤ Budget</button><button data-page="Settings">⚙ Settings</button><button data-page="My Restaurant" hidden>▣ My Restaurant</button><button data-page="Super Admin" hidden>♛ Super Admin</button></nav></aside><main class="main"><div class="topbar"><div><p class="gold" style="font-size:10px;letter-spacing:2px;margin-bottom:4px">BUSINESS MANAGEMENT</p><h2 id="pageTitle">Dashboard</h2></div><div class="topbar-actions"><span id="businessChip" class="chip">My Business</span><button id="logout" class="top-logout" type="button">↪ Sign out</button></div></div><div id="appNotice"></div><section id="content"></section></main></div>
 <div id="printArea" class="hidden"></div>
 <script>
 const SUPABASE_URL="https://hgwotfexwdctqjprkbst.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY="sb_publishable_4SgxZyVh3qSwdFwpPf03CQ_yfF0W95e";
 const db=window.supabase?.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
-const $=id=>document.getElementById(id);let authMode="signin",currentUser=null,business=null,currentRole="owner",isSuperAdmin=false,products=[],cart=[],pageNow="Dashboard",profile={name:"",phone:"",address:"",logo_url:"",currency:"ETB"};
+const $=id=>document.getElementById(id);let authMode="signin",currentUser=null,business=null,currentRole="owner",isSuperAdmin=false,adminRestaurantMode=false,products=[],cart=[],pageNow="Dashboard",profile={name:"",phone:"",address:"",logo_url:"",currency:"ETB"};
 const money=n=>new Intl.NumberFormat("en-US",{style:"currency",currency:profile.currency||"ETB"}).format(Number(n||0));
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const today=()=>new Date().toISOString().slice(0,10);
@@ -37,14 +37,14 @@ function say(id,msg){if($(id))$(id).textContent=msg}
 function setAuthMode(m){authMode=m;$("signinTab").classList.toggle("active",m==="signin");$("signupTab").classList.toggle("active",m==="signup");$("businessField").classList.toggle("hidden",m!=="signup");$("businessName").required=m==="signup";$("authSubmit").textContent=m==="signin"?"Sign in":"Create account";say("authMsg",m==="signup"?"Enter your business name, email and password.":"")}
 $("signinTab").onclick=()=>setAuthMode("signin");$("signupTab").onclick=()=>setAuthMode("signup");
 $("authForm").onsubmit=async e=>{e.preventDefault();if(!db){say("authMsg","Supabase library did not load. Check your internet connection.");return}const btn=$("authSubmit");btn.disabled=true;say("authMsg","Please wait…");try{const email=$("email").value.trim(),password=$("password").value;if(authMode==="signin"){const {error}=await db.auth.signInWithPassword({email,password});if(error)throw error;await boot()}else{const name=$("businessName").value.trim();if(!name)throw Error("Enter your business name.");const {data,error}=await db.auth.signUp({email,password,options:{data:{business_name:name},emailRedirectTo:location.href.split("#")[0]}});if(error)throw error;if(!data.session){say("authMsg","Account created. Check your email confirmation, then sign in. Business profile will be created automatically after confirmation.");return}await boot()}}catch(err){say("authMsg",err.message||"Could not sign in/create account.")}finally{btn.disabled=false}};
-$("logout").onclick=async()=>{await db.auth.signOut();currentUser=null;business=null;currentRole="owner";isSuperAdmin=false;products=[];cart=[];$("shell").hidden=true;$("auth").hidden=false;setAuthMode("signin")};
+$("logout").onclick=async()=>{await db.auth.signOut();currentUser=null;business=null;currentRole="owner";isSuperAdmin=false;adminRestaurantMode=false;products=[];cart=[];$("shell").hidden=true;$("auth").hidden=false;setAuthMode("signin")};
 $("nav").onclick=e=>{const b=e.target.closest("[data-page]");if(b)showPage(b.dataset.page)};
 async function boot(){const {data:{user},error}=await db.auth.getUser();if(error)throw error;if(!user)return;currentUser=user;$("auth").hidden=true;$("shell").hidden=false;
   // Super Admin identity is verified by Supabase RPC, never by a frontend email check.
   const {data:adminFlag,error:adminError}=await db.rpc("wizo_is_super_admin");
   if(adminError)throw adminError;
   isSuperAdmin=adminFlag===true;
-  if(isSuperAdmin){currentRole="super_admin";business=null;$("businessChip").textContent="WIZO OMEGA · SUPER ADMIN";applyRoleAccess();await showPage("Super Admin");return;}
+  if(isSuperAdmin){currentRole="super_admin";adminRestaurantMode=false;business=null;$("businessChip").textContent="WIZO OMEGA · SUPER ADMIN";applyRoleAccess();await showPage("Super Admin");return;}
   await loadBusiness();await showPage("Dashboard") }
 async function loadBusiness(){
   // A user can have memberships in more than one business. Do not use limit(1).
@@ -72,15 +72,31 @@ async function loadBusiness(){
   $("businessChip").textContent=(data.name||currentUser.email)+" · "+currentRole.toUpperCase();
   applyRoleAccess();
 }
+async function enterAdminRestaurant(){
+  if(!isSuperAdmin)throw Error("Super Admin access required.");
+  const {data,error}=await db.from("businesses").select("*").eq("owner_id",currentUser.id).maybeSingle();
+  if(error)throw error;
+  if(!data)throw Error("Your restaurant business was not found under this Super Admin account.");
+  business=data;
+  profile={...profile,...data};
+  currentRole="owner";
+  adminRestaurantMode=true;
+  $("businessChip").textContent=(data.name||currentUser.email)+" · OWNER · LIFETIME FREE";
+  applyRoleAccess();
+  await showPage("Dashboard");
+}
 function isOwnerRole(){return ["owner","admin"].includes(currentRole)}
 function applyRoleAccess(){
-  const allowed=isSuperAdmin?["Super Admin"]:isOwnerRole()?["Dashboard","POS","Products","Purchases","Expenses","Customers","Suppliers","Sales","Reports","Cashier Management","Employees","Budget","Settings"]:["Dashboard","POS","Sales","Reports","End of Day"];
+  const ownerPages=["Dashboard","POS","Products","Purchases","Expenses","Customers","Suppliers","Sales","Reports","Cashier Management","Employees","Budget","Settings"];
+  const allowed=isSuperAdmin
+    ?(adminRestaurantMode?[...ownerPages,"My Restaurant","Super Admin"]:["My Restaurant","Super Admin"])
+    :isOwnerRole()?ownerPages:["Dashboard","POS","Sales","Reports","End of Day"];
   document.querySelectorAll("#nav button[data-page]").forEach(b=>{
     const ok=allowed.includes(b.dataset.page);
     b.hidden=!ok;
     b.disabled=!ok;
   });
-  if(!allowed.includes(pageNow))pageNow="POS";
+  if(!allowed.includes(pageNow))pageNow=isSuperAdmin&&!adminRestaurantMode?"Super Admin":"POS";
 }
 function showNotice(msg){$("appNotice").innerHTML=msg?`<div class="notice">${esc(msg)}</div>`:""}
 function renderOwnerSubscriptionNotice(){
@@ -109,7 +125,9 @@ function renderOwnerSubscriptionNotice(){
 }
 async function showPage(p){
   if(p==="Super Admin"&&!isSuperAdmin){showNotice("Super Admin access required.");p="Dashboard";}
-  if(isSuperAdmin&&p!=="Super Admin"){p="Super Admin";}
+  if(p==="My Restaurant"&&isSuperAdmin){await enterAdminRestaurant();return;}
+  if(p==="Super Admin"&&isSuperAdmin){adminRestaurantMode=false;business=null;currentRole="super_admin";$("businessChip").textContent="WIZO OMEGA · SUPER ADMIN";applyRoleAccess();}
+  else if(isSuperAdmin&&!adminRestaurantMode){p="Super Admin";}
   const cashierAllowed=["Dashboard","POS","Sales","Reports","End of Day"];
   if(!isSuperAdmin&&!isOwnerRole()&&!cashierAllowed.includes(p)){showNotice("This page is available to Owner/Admin only.");p="POS";}
   pageNow=p;$("pageTitle").textContent=p;
@@ -591,7 +609,7 @@ async function superAdminPage(){
     if(b.subscription_status==="active"&&b.subscription_ends_at&&new Date(b.subscription_ends_at)<new Date())return "expired";
     return b.subscription_status||"unknown";
   };
-  $("content").innerHTML=`<div class="panel" style="border:1px solid #65a30d;background:#f0fff5;margin-bottom:14px"><h3 style="margin-bottom:5px">♛ Super Admin — Lifetime Free</h3><p class="muted" style="margin:0">Your Super Admin account and its own business have permanent free access. No trial countdown, subscription payment, or expiry applies. This exemption is based on your verified Super Admin account.</p></div>
+  $("content").innerHTML=`<div class="panel" style="border:1px solid #65a30d;background:#f0fff5;margin-bottom:14px"><h3 style="margin-bottom:5px">♛ Super Admin — Lifetime Free</h3><p class="muted" style="margin:0 0 12px">Your Super Admin account and its own business have permanent free access. No trial countdown, subscription payment, or expiry applies. This exemption is based on your verified Super Admin account.</p><button type="button" class="primary" onclick="showPage('My Restaurant')">▣ Open My Restaurant (Owner Dashboard)</button></div>
   <div class="stats"><div class="stat"><small>REGISTERED BUSINESSES</small><strong>${businesses.length}</strong></div><div class="stat"><small>ACTIVE CUSTOMER SUBSCRIPTIONS</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="active").length}</strong></div><div class="stat"><small>TRIAL BUSINESSES</small><strong>${customerBusinesses.filter(b=>statusLabel(b)==="trial").length}</strong></div><div class="stat"><small>EXPIRED / NEEDS REVIEW</small><strong>${customerBusinesses.filter(b=>["expired","trial expired"].includes(statusLabel(b))).length}</strong></div></div>
   <div class="panel"><h3>Business & Subscription Management</h3><p class="muted">Your own Super Admin business is always Lifetime Free. Set payment amount and access duration individually for customer businesses; no fixed price is applied.</p>${businesses.length?`<div class="tablewrap"><table><thead><tr><th>Business</th><th>Owner email</th><th>Status</th><th>Trial ends</th><th>Subscription ends</th><th>Current amount</th></tr></thead><tbody>${businesses.map(b=>{const isAdminOwned=String(b.owner_id||"")===String(currentUser.id);return `<tr><td>${esc(b.business_name)}</td><td>${esc(b.owner_email||"—")}</td><td>${isAdminOwned?'<strong style="color:#166534">♛ SUPER ADMIN · LIFETIME FREE</strong>':esc(statusLabel(b))}</td><td>${isAdminOwned?"Not applicable":esc(fmtDate(b.trial_ends_at))}</td><td>${isAdminOwned?"Never expires":esc(fmtDate(b.subscription_ends_at))}</td><td>${isAdminOwned?"FREE":b.subscription_amount==null?"—":esc(b.subscription_currency||"ETB")+" "+esc(b.subscription_amount)}</td></tr>`}).join("")}</tbody></table></div>`:'<div class="empty">No businesses found.</div>'}</div>
   <div class="panel"><h3>Set / Extend Customer Business Subscription</h3>${customerBusinesses.length?`<form id="adminSubscriptionForm"><label>Select business *</label><select name="business_id" required><option value="">Choose a business</option>${customerBusinesses.map(b=>`<option value="${esc(b.business_id)}">${esc(b.business_name)} — ${esc(b.owner_email||"")}</option>`).join("")}</select><div class="formgrid"><div><label>Payment amount *</label><input name="amount" type="number" min="0" step="0.01" placeholder="Enter amount" required></div><div><label>Currency *</label><select name="currency"><option>ETB</option><option>SAR</option><option>USD</option></select></div><div><label>Subscription duration (days) *</label><input name="duration_days" type="number" min="1" step="1" placeholder="e.g. 30, 90, 365" required></div><div><label>Notes / payment reference</label><input name="notes" maxlength="500" placeholder="Optional payment details"></div></div><button class="primary" type="submit" style="margin-top:14px">Activate / Extend Subscription</button><span id="adminSubscriptionMsg" class="msg"></span></form>`:'<div class="empty">There are no customer businesses to activate yet. Your own Super Admin business is permanently free.</div>'}</div>`;
