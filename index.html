@@ -83,6 +83,30 @@ function applyRoleAccess(){
   if(!allowed.includes(pageNow))pageNow="POS";
 }
 function showNotice(msg){$("appNotice").innerHTML=msg?`<div class="notice">${esc(msg)}</div>`:""}
+function renderOwnerSubscriptionNotice(){
+  if(!business||isSuperAdmin)return;
+  const status=String(business.subscription_status||"active").toLowerCase();
+  const now=new Date();
+  const trialEnd=business.trial_ends_at?new Date(business.trial_ends_at):null;
+  const paidEnd=business.subscription_ends_at?new Date(business.subscription_ends_at):null;
+  const fmt=d=>d&&!Number.isNaN(d.getTime())?d.toLocaleString():"";
+  let message="";
+  if(status==="trial"){
+    if(trialEnd&&trialEnd<=now)message="Your 5-day free trial has expired. Please contact WIZO OMEGA Super Admin to activate your subscription.";
+    else if(trialEnd){const days=Math.max(0,Math.ceil((trialEnd-now)/86400000));message=`Free trial active · ${days} day(s) remaining · Ends ${fmt(trialEnd)}. Contact Super Admin to arrange your subscription.`;}
+    else message="Your account is on a free trial. Contact WIZO OMEGA Super Admin for subscription details.";
+  }else if(status==="active"&&paidEnd&&paidEnd<=now){
+    message="Your subscription has expired. Please contact WIZO OMEGA Super Admin to renew access.";
+  }else if(status==="active"&&paidEnd){
+    const days=Math.ceil((paidEnd-now)/86400000);
+    if(days<=7)message=`Subscription renewal reminder · ${Math.max(0,days)} day(s) remaining · Ends ${fmt(paidEnd)}. Contact Super Admin to renew.`;
+  }else if(status==="suspended"){
+    message="This business account is suspended. Please contact WIZO OMEGA Super Admin.";
+  }else if(status!=="active"){
+    message=`Subscription status: ${status}. Please contact WIZO OMEGA Super Admin.`;
+  }
+  if(message)$("appNotice").innerHTML=`<div class="notice">${esc(message)}</div>`;
+}
 async function showPage(p){
   if(p==="Super Admin"&&!isSuperAdmin){showNotice("Super Admin access required.");p="Dashboard";}
   if(isSuperAdmin&&p!=="Super Admin"){p="Super Admin";}
@@ -91,6 +115,7 @@ async function showPage(p){
   pageNow=p;$("pageTitle").textContent=p;
   document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));
   showNotice("");
+  if(!isSuperAdmin)renderOwnerSubscriptionNotice();
   try{if(p==="Super Admin")await superAdminPage();else if(p==="Dashboard")await dashboard();else if(p==="POS")await renderPOS();else if(p==="Products")await productsPage();else if(p==="Purchases")await purchasesPage();else if(p==="Expenses")await expensesPage();else if(p==="Customers")await simpleDirectory("Customers");else if(p==="Suppliers")await simpleDirectory("Suppliers");else if(p==="Sales")await salesPage();else if(p==="Reports")await reportsPage();else if(p==="End of Day")await endOfDayPage();else if(p==="Cashier Management")await cashierManagementPage();else if(p==="Employees")await employeesPage();else if(p==="Budget")await budgetPage();else if(p==="Settings")settingsPage()}
   catch(err){showNotice(err.message||String(err));$("content").innerHTML=`<div class="panel"><h3>Unable to load this page</h3><p>${esc(err.message||String(err))}</p></div>`}
 }
