@@ -201,7 +201,7 @@ async function sendSubscriptionRequest(){
     const pl=chosen.data;
     const {data,error}=await db.from("wizo_subscription_requests").insert({
       business_id:business.id,requested_by:user.id,selected_plan_id:pl.id,selected_plan_name:pl.plan_name,
-      selected_amount:pl.price,selected_currency:pl.currency,selected_duration_days:pl.duration_days,
+      selected_amount:pl.price,selected_currency:pl.currency,selected_duration_days:pl.duration_days,selected_duration_value:pl.duration_value,selected_duration_unit:pl.duration_unit,
       request_message:`Subscription request: ${pl.plan_name} — ${pl.currency} ${pl.price} for ${pl.duration_value} ${pl.duration_unit}.`
     }).select("id,status,created_at").single();
     if(error)throw error;
@@ -739,7 +739,7 @@ async function superAdminPage(){
   };
   let requests=[];
   const requestResult=await db.from("wizo_subscription_requests")
-    .select("id,business_id,requested_by,request_message,status,created_at,admin_message,business_name,selected_plan_name,selected_amount,selected_currency,selected_duration_days")
+    .select("id,business_id,requested_by,request_message,status,created_at,admin_message,business_name,selected_plan_name,selected_amount,selected_currency,selected_duration_days,selected_duration_value,selected_duration_unit")
     .order("created_at",{ascending:false}).limit(200);
   if(requestResult.error)throw requestResult.error;
   requests=requestResult.data||[];
@@ -789,7 +789,7 @@ async function superAdminPage(){
     const panel=$("requestReviewPanel");panel.classList.remove("hidden");
     const f=$("requestReviewForm");f.elements.request_id.value=r.id;
     $("requestReviewBusiness").textContent=`Business: ${r.business_name||"Business"} · Request: ${fmtDate(r.created_at)} · Selected plan: ${r.selected_plan_name||"Not selected"}`;
-    if(r.selected_plan_name){f.elements.amount.value=r.selected_amount??"";f.elements.currency.value=r.selected_currency||"ETB";f.elements.duration_value.value=r.selected_duration_days||30;f.elements.duration_unit.value="days";}
+    if(r.selected_plan_name){f.elements.amount.value=r.selected_amount??"";f.elements.currency.value=r.selected_currency||"ETB";f.elements.duration_value.value=r.selected_duration_value||r.selected_duration_days||1;f.elements.duration_unit.value=r.selected_duration_unit||"days";}
     panel.scrollIntoView({behavior:"smooth",block:"center"});
   });
   $$("[data-reject-request]").forEach(btn=>btn.onclick=async()=>{
