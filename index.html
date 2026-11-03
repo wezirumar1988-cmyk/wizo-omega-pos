@@ -304,45 +304,48 @@ async function getProducts(){
   if(error)throw error;products=data||[];return products;
 }
 async function productsPage(){
-  const key=`wizo_menu_items_${business.id}`;
-  const readMenu=()=>{try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}};
-  let editingId=null,pictureData="";
-  const resetForm=()=>{editingId=null;pictureData="";$("menuItemForm").reset();$("menuPicturePreview").textContent="Choose an image to preview it.";$("menuFormTitle").textContent="＋ Add Menu Item";$("menuSaveBtn").textContent="Save menu item";$("menuCancelEdit").classList.add("hidden")};
+  let editingId=null,pictureData="",picturePath="";
+  let menuItems=[];
+  const loadMenu=async()=>{const {data,error}=await db.from("wizo_menu_items").select("*").eq("business_id",business.id).order("created_at",{ascending:false});if(error)throw error;menuItems=(data||[]).map(x=>({...x,image:x.image_path?db.storage.from("wizo-menu-images").getPublicUrl(x.image_path).data.publicUrl:""}));return menuItems};
+  const resetForm=()=>{editingId=null;pictureData="";picturePath="";$("menuItemForm").reset();$("menuPicturePreview").textContent="Choose an image to preview it.";$("menuFormTitle").textContent="＋ Add Menu Item";$("menuSaveBtn").textContent="Save menu item";$("menuCancelEdit").classList.add("hidden")};
   const renderMenu=()=>{
-    const items=readMenu();
+    const items=menuItems;
     $("menuItemsCount").textContent=`Menu items (${items.length})`;
     $("menuItemsList").innerHTML=items.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px">${items.map(item=>`<article class="panel" style="padding:12px"><div style="height:130px;border-radius:9px;overflow:hidden;background:var(--panel2);display:grid;place-items:center;margin-bottom:10px">${item.image?`<img src="${item.image}" alt="${esc(item.name)}" style="width:100%;height:100%;object-fit:cover">`:`<span class="muted">No picture</span>`}</div><h3 style="margin-bottom:5px">${esc(item.name)}</h3><p class="muted" style="margin-bottom:6px">${esc(item.category||"Other")}</p><strong class="gold">${money(item.price)}</strong>${item.description?`<p class="muted" style="margin-top:8px;margin-bottom:8px">${esc(item.description)}</p>`:""}<p style="margin:8px 0"><span class="chip">${item.available?"Available":"Unavailable"}</span></p><div class="row"><button type="button" data-edit-menu="${esc(item.id)}">Edit</button><button type="button" class="danger" data-delete-menu="${esc(item.id)}">Delete</button></div></article>`).join("")}</div>`:`<div class="empty">No menu items yet. Add your first restaurant item above.</div>`;
     $("menuItemsList").querySelectorAll("[data-edit-menu]").forEach(btn=>btn.onclick=()=>{
-      const item=readMenu().find(x=>String(x.id)===btn.dataset.editMenu);if(!item)return;
-      editingId=item.id;pictureData=item.image||"";const f=$("menuItemForm");f.elements.name.value=item.name||"";f.elements.category.value=item.category||"Other";f.elements.price.value=item.price||"";f.elements.description.value=item.description||"";f.elements.available.value=item.available?"yes":"no";
-      $("menuPicturePreview").innerHTML=pictureData?`<img src="${pictureData}" alt="Current menu picture" style="display:block;max-width:180px;max-height:130px;object-fit:cover;border-radius:8px"><span class="muted">Current picture (choose a new one to replace)</span>`:"No picture selected.";
+      const item=menuItems.find(x=>String(x.id)===btn.dataset.editMenu);if(!item)return;
+      editingId=item.id;pictureData="";picturePath=item.image_path||"";const f=$("menuItemForm");f.elements.name.value=item.name||"";f.elements.category.value=item.category||"Other";f.elements.price.value=item.price||"";f.elements.description.value=item.description||"";f.elements.available.value=item.available?"yes":"no";
+      $("menuPicturePreview").innerHTML=item.image?`<img src="${item.image}" alt="Current menu picture" style="display:block;max-width:180px;max-height:130px;object-fit:cover;border-radius:8px"><span class="muted">Current picture (choose a new one to replace)</span>`:"No picture selected.";
       $("menuFormTitle").textContent="Edit Menu Item";$("menuSaveBtn").textContent="Save changes";$("menuCancelEdit").classList.remove("hidden");window.scrollTo({top:0,behavior:"smooth"});
     });
-    $("menuItemsList").querySelectorAll("[data-delete-menu]").forEach(btn=>btn.onclick=()=>{if(!confirm("Delete this menu item?"))return;localStorage.setItem(key,JSON.stringify(readMenu().filter(x=>String(x.id)!==btn.dataset.deleteMenu)));if(String(editingId)===btn.dataset.deleteMenu)resetForm();renderMenu()});
+    $("menuItemsList").querySelectorAll("[data-delete-menu]").forEach(btn=>btn.onclick=async()=>{if(!confirm("Delete this menu item?"))return;try{const item=menuItems.find(x=>String(x.id)===btn.dataset.deleteMenu);const {error}=await db.from("wizo_menu_items").delete().eq("business_id",business.id).eq("id",btn.dataset.deleteMenu);if(error)throw error;if(item?.image_path)await db.storage.from("wizo-menu-images").remove([item.image_path]);menuItems=menuItems.filter(x=>String(x.id)!==btn.dataset.deleteMenu);if(String(editingId)===btn.dataset.deleteMenu)resetForm();renderMenu()}catch(err){say("menuItemMsg","Could not delete: "+(err.message||err))}});
   };
-  $("content").innerHTML=`<div class="panel"><h3 id="menuFormTitle">＋ Add Menu Item</h3><p class="muted">Add restaurant food and drinks here.</p><form id="menuItemForm"><div class="formgrid"><div><label>Menu item name *</label><input name="name" required placeholder="e.g. Chicken Pizza"></div><div><label>Category *</label><select name="category" required><option value="Pizza">Pizza</option><option value="Burger">Burger</option><option value="Shawarma">Shawarma</option><option value="Drinks">Drinks</option><option value="Breakfast">Breakfast</option><option value="Main dishes">Main dishes</option><option value="Dessert">Dessert</option><option value="Other">Other</option></select></div><div><label>Selling price (${esc(profile.currency||"ETB")}) *</label><input name="price" type="number" min="0.01" step=".01" required placeholder="0.00"></div><div><label>Food picture (laptop / phone)</label><input id="menuPicture" name="picture" type="file" accept="image/*"><div id="menuPicturePreview" class="muted" style="margin-top:7px;font-size:12px">Choose an image to preview it.</div></div><div style="grid-column:1/-1"><label>Description (optional)</label><textarea name="description" rows="2" placeholder="Ingredients or short description"></textarea></div><div><label>Availability</label><select name="available"><option value="yes">Available on menu</option><option value="no">Temporarily unavailable</option></select></div></div><button id="menuSaveBtn" class="primary" style="margin-top:15px" type="submit">Save menu item</button> <button id="menuCancelEdit" type="button" class="hidden">Cancel edit</button><span id="menuItemMsg" class="msg"></span></form></div><div class="panel"><h3 id="menuItemsCount">Menu items (0)</h3><div id="menuItemsList"></div></div>`;
+  $("content").innerHTML=`<div class="panel"><h3 id="menuFormTitle">＋ Add Menu Item</h3><p class="muted">Add restaurant food and drinks here. Menu details and pictures sync through Supabase Cloud.</p><form id="menuItemForm"><div class="formgrid"><div><label>Menu item name *</label><input name="name" required placeholder="e.g. Chicken Pizza"></div><div><label>Category *</label><select name="category" required><option value="Pizza">Pizza</option><option value="Burger">Burger</option><option value="Shawarma">Shawarma</option><option value="Drinks">Drinks</option><option value="Breakfast">Breakfast</option><option value="Main dishes">Main dishes</option><option value="Dessert">Dessert</option><option value="Other">Other</option></select></div><div><label>Selling price (${esc(profile.currency||"ETB")}) *</label><input name="price" type="number" min="0.01" step=".01" required placeholder="0.00"></div><div><label>Food picture (laptop / phone)</label><input id="menuPicture" name="picture" type="file" accept="image/*"><div id="menuPicturePreview" class="muted" style="margin-top:7px;font-size:12px">Choose an image to preview it.</div></div><div style="grid-column:1/-1"><label>Description (optional)</label><textarea name="description" rows="2" placeholder="Ingredients or short description"></textarea></div><div><label>Availability</label><select name="available"><option value="yes">Available on menu</option><option value="no">Temporarily unavailable</option></select></div></div><button id="menuSaveBtn" class="primary" style="margin-top:15px" type="submit">Save menu item</button> <button id="menuCancelEdit" type="button" class="hidden">Cancel edit</button><span id="menuItemMsg" class="msg"></span></form></div><div class="panel"><h3 id="menuItemsCount">Menu items (0)</h3><div id="menuItemsList"></div></div>`;
   $("menuCancelEdit").onclick=resetForm;
-  $("menuPicture").onchange=e=>{
-    const file=e.target.files?.[0];if(!file)return;
-    if(!file.type.startsWith("image/")){e.target.value="";say("menuItemMsg","Please choose an image file.");return}
-    if(file.size>2*1024*1024){e.target.value="";say("menuItemMsg","Image must be 2 MB or smaller. Please choose a smaller picture.");return}
-    const reader=new FileReader();reader.onload=()=>{pictureData=String(reader.result||"");$("menuPicturePreview").innerHTML=`<img src="${pictureData}" alt="Menu picture preview" style="display:block;max-width:180px;max-height:130px;object-fit:cover;border-radius:8px"><span class="muted">Picture selected</span>`};reader.onerror=()=>say("menuItemMsg","Could not read this picture. Please try another file.");reader.readAsDataURL(file);
-  };
-  $("menuItemForm").onsubmit=e=>{
+  $("menuPicture").onchange=e=>{const file=e.target.files?.[0];if(!file)return;if(!file.type.startsWith("image/")){e.target.value="";say("menuItemMsg","Please choose an image file.");return}if(file.size>2*1024*1024){e.target.value="";say("menuItemMsg","Image must be 2 MB or smaller.");return}const reader=new FileReader();reader.onload=()=>{pictureData=String(reader.result||"");$("menuPicturePreview").innerHTML=`<img src="${pictureData}" alt="Menu picture preview" style="display:block;max-width:180px;max-height:130px;object-fit:cover;border-radius:8px"><span class="muted">Picture selected</span>`};reader.onerror=()=>say("menuItemMsg","Could not read this picture.");reader.readAsDataURL(file)};
+  $("menuItemForm").onsubmit=async e=>{
     e.preventDefault();const f=new FormData(e.currentTarget),name=String(f.get("name")||"").trim(),price=Number(f.get("price"));
     if(!name||!Number.isFinite(price)||price<=0){say("menuItemMsg","Enter a menu name and a valid selling price.");return}
-    const items=readMenu(),data={name,category:String(f.get("category")||"Other"),price,description:String(f.get("description")||"").trim(),image:pictureData,available:f.get("available")==="yes"};
-    try{if(editingId!==null){const index=items.findIndex(x=>String(x.id)===String(editingId));if(index<0)throw Error("Menu item was not found.");items[index]={...items[index],...data};localStorage.setItem(key,JSON.stringify(items));say("menuItemMsg","Menu item updated.")}else{items.unshift({id:`${Date.now()}_${Math.random().toString(36).slice(2,8)}`,...data,created_at:new Date().toISOString()});localStorage.setItem(key,JSON.stringify(items));say("menuItemMsg","Menu item saved.")}resetForm();renderMenu()}
-    catch(err){say("menuItemMsg","Could not save. The browser may be out of storage space; try a smaller picture.")}
+    const id=editingId||crypto.randomUUID();let newPath=picturePath;
+    try{
+      $("menuSaveBtn").disabled=true;
+      if(pictureData){const blob=await (await fetch(pictureData)).blob();const ext=(blob.type.split("/")[1]||"jpg").replace(/[^a-z0-9]/gi,"");newPath=`${business.id}/${id}.${ext||"jpg"}`;const {error:upErr}=await db.storage.from("wizo-menu-images").upload(newPath,blob,{upsert:true,contentType:blob.type});if(upErr)throw upErr}
+      const row={id,business_id:business.id,name,category:String(f.get("category")||"Other"),price,description:String(f.get("description")||"").trim(),image_path:newPath||null,available:f.get("available")==="yes",updated_at:new Date().toISOString()};
+      let result;if(editingId)result=await db.from("wizo_menu_items").update(row).eq("business_id",business.id).eq("id",id).select("*").single();else result=await db.from("wizo_menu_items").insert(row).select("*").single();
+      if(result.error)throw result.error;
+      if(pictureData&&picturePath&&picturePath!==newPath)await db.storage.from("wizo-menu-images").remove([picturePath]);
+      await loadMenu();resetForm();renderMenu();say("menuItemMsg",editingId?"Menu item updated in cloud.":"Menu item saved to cloud.");
+    }catch(err){say("menuItemMsg","Cloud save failed: "+(err.message||err)+". Check the supplied SQL and Storage setup.")}finally{$("menuSaveBtn").disabled=false}
   };
-  renderMenu();
+  try{await loadMenu();renderMenu()}catch(err){$("menuItemsList").innerHTML=`<div class="empty">Could not load menu from Supabase: ${esc(err.message||err)}. Run the cloud setup SQL first.</div>`}
 }
 async function renderPOS(){
   await getProducts();
   cart=[];
-  const menuKey=`wizo_menu_items_${business.id}`;
-  const readRestaurantMenu=()=>{try{return JSON.parse(localStorage.getItem(menuKey)||"[]").filter(x=>x.available!==false)}catch{return []}};
-  const restaurantMenu=readRestaurantMenu().map(x=>({...x,id:`menu_${x.id}`,menu_only:true,unit:"item",selling_price:Number(x.price)||0,cost_price:0,stock_quantity:0,sku:""}));
+  const {data:cloudMenu,error:menuErr}=await db.from("wizo_menu_items").select("*").eq("business_id",business.id).eq("available",true).order("created_at",{ascending:false});
+  if(menuErr)throw menuErr;
+  const restaurantMenu=(cloudMenu||[]).map(x=>({...x,image:x.image_path?db.storage.from("wizo-menu-images").getPublicUrl(x.image_path).data.publicUrl:"",id:`menu_${x.id}`,menu_item_id:x.id,menu_only:true,unit:"item",selling_price:Number(x.price)||0,cost_price:0,stock_quantity:0,sku:""}));
+  restaurantMenuCloudCache=restaurantMenu;
   // POS is for restaurant menu items only. Purchases are recorded separately and are not sold directly from this screen.
   const allItems=restaurantMenu;
   $("content").innerHTML=`<div class="pos"><div class="panel"><div class="row"><div><label>Search menu / barcode</label><input id="menuSearch" placeholder="Type product or menu item"></div><div><label>Category</label><select id="categoryFilter"><option value="">All categories</option>${[...new Set(allItems.map(p=>p.category).filter(Boolean))].map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></div></div><div id="menuGrid" class="menuitems" style="margin-top:12px"></div><p class="muted" style="margin-top:10px">Click an item to add it to the current order.</p></div><div class="panel"><h3>Current order</h3><div class="formgrid"><div><label>Table / order no.</label><input id="tableNo" placeholder="Takeaway / Table 1"></div><div><label>Customer</label><input id="saleCustomer" placeholder="Optional customer name"></div><div><label>Payment</label><select id="payment"><option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="credit">Credit</option></select></div><div><label>Discount</label><input id="discount" type="number" min="0" step=".01" value="0"></div></div><div id="cartItems" style="margin-top:15px"></div><div class="row" style="margin-top:15px"><span class="muted">Subtotal</span><b id="subtotal">${money(0)}</b></div><div class="row"><span class="muted">Total</span><strong class="total" id="cartTotal">${money(0)}</strong></div><div class="actionbar"><button id="clearCart">Clear</button><button id="holdSaleBtn" type="button" style="background:#d99000;color:#fff;border-color:#d99000;font-weight:800">⏸ Hold</button><button id="recallSaleBtn" type="button" style="background:#15803d;color:#fff;border-color:#15803d;font-weight:800">↶ Recall <span id="heldCount"></span></button><button id="payBtn" class="primary">💳 Pay & save sale</button></div><p class="muted" id="saleMsg" style="margin-top:10px"></p></div></div>`;
@@ -410,12 +413,11 @@ async function renderPOS(){
   $("clearCart").onclick=()=>{cart=[];paintCart()};$("discount").oninput=paintCart;$("payBtn").onclick=checkout;paintCart();
   loadHeldSales().catch(err=>say("saleMsg","Could not load cloud held orders: "+(err.message||err)+". Run the supplied SQL setup in Supabase first."));
 }
+let restaurantMenuCloudCache=[];
 function addToCart(id){
   const p=products.find(x=>String(x.id)===String(id));
   if(p){const existing=cart.find(x=>String(x.product_id)===String(id));if(existing)existing.quantity+=1;else cart.push({product_id:p.id,product_name:p.name,unit:p.unit,quantity:1,unit_price:Number(p.selling_price),cost_price:Number(p.cost_price),stock_quantity:Number(p.stock_quantity),menu_only:false});paintCart();return}
-  const menuKey=`wizo_menu_items_${business.id}`;
-  let items=[];try{items=JSON.parse(localStorage.getItem(menuKey)||"[]")}catch{}
-  const rawId=String(id).replace(/^menu_/,""),m=items.find(x=>String(x.id)===rawId);
+  const rawId=String(id).replace(/^menu_/,""),m=restaurantMenuCloudCache.find(x=>String(x.menu_item_id||x.id)===rawId);
   if(!m)return;
   const existing=cart.find(x=>x.menu_only&&String(x.menu_item_id)===rawId);
   if(existing)existing.quantity+=1;else cart.push({product_id:null,menu_item_id:rawId,menu_only:true,product_name:m.name,unit:"item",quantity:1,unit_price:Number(m.price)||0,cost_price:0,stock_quantity:0});
@@ -885,12 +887,18 @@ $("deleteDataBtn").onclick=async()=>{
     }
     // Remove this business's cloud budget/history only after the owner confirms Delete Data.
     for(const table of ["wizo_budget_history","wizo_budgets"]){const {error}=await db.from(table).delete().eq("business_id",business.id);if(error)throw new Error(table+": "+error.message)}
-    // Menu remains browser-local; clear the old local budget copies after cloud deletion succeeds.
-    localStorage.removeItem(`wizo_menu_items_${business.id}`);
+    // Delete cloud menu records and their associated Storage objects for this business.
+    const {data:menuRows,error:menuDeleteRead}=await db.from("wizo_menu_items").select("image_path").eq("business_id",business.id);
+    if(menuDeleteRead)throw menuDeleteRead;
+    const {error:menuDeleteErr}=await db.from("wizo_menu_items").delete().eq("business_id",business.id);
+    if(menuDeleteErr)throw menuDeleteErr;
+    const menuPaths=(menuRows||[]).map(x=>x.image_path).filter(Boolean);
+    if(menuPaths.length){const {error:menuStorageErr}=await db.storage.from("wizo-menu-images").remove(menuPaths);if(menuStorageErr)throw menuStorageErr}
+    // Clear legacy browser budget copies only after cloud deletion succeeds.
     localStorage.removeItem(`wizo_budget_${business.id}`);
     localStorage.removeItem(`wizo_budget_history_${business.id}`);
     $("deleteDataConfirm").value="";
-    say("deleteDataMsg","Finished. Sales and sale items, purchases and purchase items, expenses, employees, products/menu, customers, suppliers and budget are cleared for this business. Business name, settings and login account remain. Local menu data on other devices is not affected. Refresh the page to see the clean state.");
+    say("deleteDataMsg","Finished. Sales and sale items, purchases and purchase items, expenses, employees, products/menu, customers, suppliers and budget are cleared for this business. Business name, settings and login account remain. Cloud menu items and their pictures are cleared for this business across devices. Refresh the page to see the clean state.");
   }catch(err){say("deleteDataMsg","Delete stopped part-way through: "+(err.message||err)+". Some records may already have been deleted; check the data before retrying.")}
   finally{btn.disabled=false}
 };
