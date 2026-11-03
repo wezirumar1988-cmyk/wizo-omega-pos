@@ -457,6 +457,14 @@ function printReceipt(size){
  window.focus();
  setTimeout(()=>window.print(),150);
 }
+let autoPrintStarted=false;
+function startAutomaticPrint(){
+ if(autoPrintStarted)return;
+ autoPrintStarted=true;
+ printReceipt('thermal');
+}
+window.addEventListener('load',()=>setTimeout(startAutomaticPrint,500));
+window.addEventListener('afterprint',()=>{setTimeout(()=>window.close(),250)});
 <\/script></body></html>`);
   w.document.close();
 }
