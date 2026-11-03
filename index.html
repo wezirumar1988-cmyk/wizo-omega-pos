@@ -326,16 +326,16 @@ async function productsPage(){
   $("menuItemForm").onsubmit=async e=>{
     e.preventDefault();const f=new FormData(e.currentTarget),name=String(f.get("name")||"").trim(),price=Number(f.get("price"));
     if(!name||!Number.isFinite(price)||price<=0){say("menuItemMsg","Enter a menu name and a valid selling price.");return}
-    const id=editingId||crypto.randomUUID();let newPath=picturePath;
+    const id=editingId||crypto.randomUUID();let newPath=picturePath;let saveStage="Preparing menu item";
     try{
       $("menuSaveBtn").disabled=true;
-      if(pictureData){const blob=await (await fetch(pictureData)).blob();const ext=(blob.type.split("/")[1]||"jpg").replace(/[^a-z0-9]/gi,"");newPath=`${business.id}/${id}.${ext||"jpg"}`;const {error:upErr}=await db.storage.from("wizo-menu-images").upload(newPath,blob,{upsert:true,contentType:blob.type});if(upErr)throw upErr}
-      const row={id,business_id:business.id,name,category:String(f.get("category")||"Other"),price,description:String(f.get("description")||"").trim(),image_path:newPath||null,available:f.get("available")==="yes",updated_at:new Date().toISOString()};
+      if(pictureData){saveStage="Uploading image to Supabase Storage";const blob=await (await fetch(pictureData)).blob();const ext=(blob.type.split("/")[1]||"jpg").replace(/[^a-z0-9]/gi,"");newPath=`${business.id}/${id}.${ext||"jpg"}`;const {error:upErr}=await db.storage.from("wizo-menu-images").upload(newPath,blob,{upsert:true,contentType:blob.type});if(upErr)throw upErr}
+      saveStage=editingId?"Updating menu row in Supabase database":"Inserting menu row in Supabase database";const row={id,business_id:business.id,name,category:String(f.get("category")||"Other"),price,description:String(f.get("description")||"").trim(),image_path:newPath||null,available:f.get("available")==="yes",updated_at:new Date().toISOString()};
       let result;if(editingId)result=await db.from("wizo_menu_items").update(row).eq("business_id",business.id).eq("id",id).select("*").single();else result=await db.from("wizo_menu_items").insert(row).select("*").single();
       if(result.error)throw result.error;
       if(pictureData&&picturePath&&picturePath!==newPath)await db.storage.from("wizo-menu-images").remove([picturePath]);
       await loadMenu();resetForm();renderMenu();say("menuItemMsg",editingId?"Menu item updated in cloud.":"Menu item saved to cloud.");
-    }catch(err){say("menuItemMsg","Cloud save failed: "+(err.message||err)+". Check the supplied SQL and Storage setup.")}finally{$("menuSaveBtn").disabled=false}
+    }catch(err){const extra=[err.code,err.details,err.hint].filter(Boolean).join(" | ");say("menuItemMsg","Cloud save failed during "+saveStage+": "+(err.message||String(err))+(extra?" ["+extra+"]":""))}finally{$("menuSaveBtn").disabled=false}
   };
   try{await loadMenu();renderMenu()}catch(err){$("menuItemsList").innerHTML=`<div class="empty">Could not load menu from Supabase: ${esc(err.message||err)}. Run the cloud setup SQL first.</div>`}
 }
