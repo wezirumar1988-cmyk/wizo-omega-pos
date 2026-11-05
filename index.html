@@ -42,73 +42,6 @@
 .admin-compact-panel .msg{font-size:11px;min-height:14px;margin-top:5px}
 @media(max-width:700px){.admin-compact-panel{padding:9px}.admin-compact-panel .formgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:430px){.admin-compact-panel .formgrid{grid-template-columns:1fr}}
-
-/* WIZO OMEGA POS — consistent scrolling and responsive workspace */
-html { min-height:100%; scroll-behavior:smooth; }
-body { min-height:100vh; overflow-x:hidden; }
-.shell { min-height:100vh; align-items:start; }
-.shell > aside {
-  position:sticky; top:0; height:100vh; min-height:0;
-  overflow-y:auto; overscroll-behavior:contain;
-  scrollbar-width:thin; scrollbar-color:#4ade80 #14532d;
-}
-.shell > aside nav { min-height:0; }
-.main { min-width:0; min-height:100vh; overflow:visible; }
-#content { min-width:0; width:100%; }
-#content > * { min-width:0; }
-.panel, .stat { overflow-wrap:anywhere; }
-.tablewrap { max-width:100%; overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; }
-.tablewrap table { min-width:max-content; }
-.pos { min-width:0; align-items:start; }
-.pos > .panel { min-width:0; }
-.pos > .panel:first-child {
-  display:flex; flex-direction:column; min-height:0;
-}
-#menuGrid {
-  max-height:calc(100vh - 300px); min-height:180px;
-  overflow-y:auto; overflow-x:hidden; align-content:start;
-  padding:2px 5px 8px 2px; overscroll-behavior:contain;
-  scrollbar-width:thin; -webkit-overflow-scrolling:touch;
-}
-#menuGrid .menuitem { width:100%; min-width:0; max-width:none; }
-#cartItems {
-  max-height:calc(100vh - 390px); min-height:70px;
-  overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain;
-  padding-right:4px; scrollbar-width:thin; -webkit-overflow-scrolling:touch;
-}
-.cartrow { min-width:0; }
-.cartrow > div { overflow-wrap:anywhere; }
-#content .panel .tablewrap { margin-top:8px; }
-#content img { max-width:100%; }
-@media (max-width:900px) {
-  .shell { display:block; min-height:100vh; }
-  .shell > aside {
-    position:relative; top:auto; height:auto; max-height:none; overflow:visible;
-  }
-  .shell > aside nav {
-    display:flex; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden;
-    padding-bottom:5px; -webkit-overflow-scrolling:touch;
-  }
-  .shell > aside nav button { flex:0 0 auto; }
-  .main { min-height:0; }
-  .pos { grid-template-columns:minmax(0,1fr); }
-  #menuGrid { max-height:65vh; min-height:220px; }
-  #cartItems { max-height:55vh; }
-}
-@media (max-width:600px) {
-  .main { padding:10px; }
-  .pos { gap:10px; }
-  .pos > .panel { padding:12px; }
-  #menuGrid { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:60vh; }
-  #cartItems { max-height:45vh; }
-  .cartrow { grid-template-columns:minmax(0,1fr) auto auto auto auto; gap:5px; }
-  .actionbar button { min-width:90px; }
-}
-@media (max-height:700px) and (min-width:901px) {
-  #menuGrid { max-height:calc(100vh - 245px); }
-  #cartItems { max-height:calc(100vh - 330px); }
-}
-
 </style>
 </head>
 <body>
@@ -370,24 +303,56 @@ async function getProducts(){
   const {data,error}=await db.from("products").select(fields).eq("business_id",business.id).order("created_at",{ascending:false});
   if(error)throw error;products=data||[];return products;
 }
-async function productsPage(){
+
+async function getRestaurantMenu(){
   const key=`wizo_menu_items_${business.id}`;
-  const readMenu=()=>{try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}};
-  let editingId=null,pictureData="";
-  const resetForm=()=>{editingId=null;pictureData="";$("menuItemForm").reset();$("menuPicturePreview").textContent="Choose an image to preview it.";$("menuFormTitle").textContent="＋ Add Menu Item";$("menuSaveBtn").textContent="Save menu item";$("menuCancelEdit").classList.add("hidden")};
+  const {data,error}=await db.from("restaurant_menu_items")
+    .select("id,business_id,name,category,price,description,image,available,created_at")
+    .eq("business_id",business.id).order("created_at",{ascending:false});
+  if(error)throw error;
+  let items=data||[];
+  // Preserve and migrate legacy browser-only menu entries once, when the cloud menu is empty.
+  if(!items.length){
+    let legacy=[];
+    try{legacy=JSON.parse(localStorage.getItem(key)||"[]")}catch{}
+    if(Array.isArray(legacy)&&legacy.length){
+      const rows=legacy.map(x=>({
+        id:String(x.id||`${Date.now()}_${Math.random().toString(36).slice(2,8)}`),
+        business_id:business.id,name:String(x.name||"").trim(),
+        category:String(x.category||"Other"),price:Number(x.price||0),
+        description:String(x.description||""),image:String(x.image||""),
+        available:x.available!==false,created_at:x.created_at||new Date().toISOString()
+      })).filter(x=>x.name&&Number.isFinite(x.price)&&x.price>0);
+      if(rows.length){
+        const {data:migrated,error:migrateError}=await db.from("restaurant_menu_items").upsert(rows,{onConflict:"id"}).select("id,business_id,name,category,price,description,image,available,created_at");
+        if(migrateError)throw migrateError;
+        items=migrated||[];
+      }
+    }
+  }
+  return items;
+}
+async function productsPage(){
+  let items=await getRestaurantMenu(),editingId=null,pictureData="";
+  const resetForm=()=>{editingId=null;pictureData="";$("menuItemForm").reset();$("menuPicturePreview").textContent="Choose an image to preview it.";$("menuFormTitle").textContent="＋ Add Menu Item";$("menuSaveBtn").textContent="Save menu item";$("menuCancelEdit").classList.add("hidden");};
   const renderMenu=()=>{
-    const items=readMenu();
     $("menuItemsCount").textContent=`Menu items (${items.length})`;
     $("menuItemsList").innerHTML=items.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px">${items.map(item=>`<article class="panel" style="padding:12px"><div style="height:130px;border-radius:9px;overflow:hidden;background:var(--panel2);display:grid;place-items:center;margin-bottom:10px">${item.image?`<img src="${item.image}" alt="${esc(item.name)}" style="width:100%;height:100%;object-fit:cover">`:`<span class="muted">No picture</span>`}</div><h3 style="margin-bottom:5px">${esc(item.name)}</h3><p class="muted" style="margin-bottom:6px">${esc(item.category||"Other")}</p><strong class="gold">${money(item.price)}</strong>${item.description?`<p class="muted" style="margin-top:8px;margin-bottom:8px">${esc(item.description)}</p>`:""}<p style="margin:8px 0"><span class="chip">${item.available?"Available":"Unavailable"}</span></p><div class="row"><button type="button" data-edit-menu="${esc(item.id)}">Edit</button><button type="button" class="danger" data-delete-menu="${esc(item.id)}">Delete</button></div></article>`).join("")}</div>`:`<div class="empty">No menu items yet. Add your first restaurant item above.</div>`;
     $("menuItemsList").querySelectorAll("[data-edit-menu]").forEach(btn=>btn.onclick=()=>{
-      const item=readMenu().find(x=>String(x.id)===btn.dataset.editMenu);if(!item)return;
-      editingId=item.id;pictureData=item.image||"";const f=$("menuItemForm");f.elements.name.value=item.name||"";f.elements.category.value=item.category||"Other";f.elements.price.value=item.price||"";f.elements.description.value=item.description||"";f.elements.available.value=item.available?"yes":"no";
+      const item=items.find(x=>String(x.id)===btn.dataset.editMenu);if(!item)return;
+      editingId=item.id;pictureData=item.image||"";const f=$("menuItemForm");
+      f.elements.name.value=item.name||"";f.elements.category.value=item.category||"Other";f.elements.price.value=item.price||"";f.elements.description.value=item.description||"";f.elements.available.value=item.available?"yes":"no";
       $("menuPicturePreview").innerHTML=pictureData?`<img src="${pictureData}" alt="Current menu picture" style="display:block;max-width:180px;max-height:130px;object-fit:cover;border-radius:8px"><span class="muted">Current picture (choose a new one to replace)</span>`:"No picture selected.";
-      $("menuFormTitle").textContent="Edit Menu Item";$("menuSaveBtn").textContent="Save changes";$("menuCancelEdit").classList.remove("hidden");window.scrollTo({top:0,behavior:"smooth"});
+      $("menuFormTitle").textContent="Edit Menu Item";$("menuSaveBtn").textContent="Save changes";$("menuCancelEdit").classList.remove("hidden");$("menuItemForm").scrollIntoView({behavior:"smooth",block:"start"});
     });
-    $("menuItemsList").querySelectorAll("[data-delete-menu]").forEach(btn=>btn.onclick=()=>{if(!confirm("Delete this menu item?"))return;localStorage.setItem(key,JSON.stringify(readMenu().filter(x=>String(x.id)!==btn.dataset.deleteMenu)));if(String(editingId)===btn.dataset.deleteMenu)resetForm();renderMenu()});
+    $("menuItemsList").querySelectorAll("[data-delete-menu]").forEach(btn=>btn.onclick=async()=>{
+      const item=items.find(x=>String(x.id)===btn.dataset.deleteMenu);if(!item||!confirm(`Delete menu item "${item.name}"?`))return;
+      btn.disabled=true;
+      try{const {error}=await db.from("restaurant_menu_items").delete().eq("id",item.id).eq("business_id",business.id);if(error)throw error;items=items.filter(x=>String(x.id)!==String(item.id));if(String(editingId)===String(item.id))resetForm();renderMenu();say("menuItemMsg","Menu item deleted from cloud.");}
+      catch(err){btn.disabled=false;say("menuItemMsg","Delete failed: "+(err.message||err));}
+    });
   };
-  $("content").innerHTML=`<div class="panel"><h3 id="menuFormTitle">＋ Add Menu Item</h3><p class="muted">Add restaurant food and drinks here.</p><form id="menuItemForm"><div class="formgrid"><div><label>Menu item name *</label><input name="name" required placeholder="e.g. Chicken Pizza"></div><div><label>Category *</label><select name="category" required><option value="Pizza">Pizza</option><option value="Burger">Burger</option><option value="Shawarma">Shawarma</option><option value="Drinks">Drinks</option><option value="Breakfast">Breakfast</option><option value="Main dishes">Main dishes</option><option value="Dessert">Dessert</option><option value="Other">Other</option></select></div><div><label>Selling price (${esc(profile.currency||"ETB")}) *</label><input name="price" type="number" min="0.01" step=".01" required placeholder="0.00"></div><div><label>Food picture (laptop / phone)</label><input id="menuPicture" name="picture" type="file" accept="image/*"><div id="menuPicturePreview" class="muted" style="margin-top:7px;font-size:12px">Choose an image to preview it.</div></div><div style="grid-column:1/-1"><label>Description (optional)</label><textarea name="description" rows="2" placeholder="Ingredients or short description"></textarea></div><div><label>Availability</label><select name="available"><option value="yes">Available on menu</option><option value="no">Temporarily unavailable</option></select></div></div><button id="menuSaveBtn" class="primary" style="margin-top:15px" type="submit">Save menu item</button> <button id="menuCancelEdit" type="button" class="hidden">Cancel edit</button><span id="menuItemMsg" class="msg"></span></form></div><div class="panel"><h3 id="menuItemsCount">Menu items (0)</h3><div id="menuItemsList"></div></div>`;
+  $("content").innerHTML=`<div class="panel"><h3 id="menuFormTitle">＋ Add Menu Item</h3><p class="muted">Menu items are saved to Supabase Cloud for this business.</p><form id="menuItemForm"><div class="formgrid"><div><label>Menu item name *</label><input name="name" required placeholder="e.g. Chicken Pizza"></div><div><label>Category *</label><select name="category" required><option value="Pizza">Pizza</option><option value="Burger">Burger</option><option value="Shawarma">Shawarma</option><option value="Drinks">Drinks</option><option value="Breakfast">Breakfast</option><option value="Main dishes">Main dishes</option><option value="Dessert">Dessert</option><option value="Other">Other</option></select></div><div><label>Selling price (${esc(profile.currency||"ETB")}) *</label><input name="price" type="number" min="0.01" step=".01" required placeholder="0.00"></div><div><label>Food picture</label><input id="menuPicture" name="picture" type="file" accept="image/*"><div id="menuPicturePreview" class="muted" style="margin-top:7px;font-size:12px">Choose an image to preview it.</div></div><div style="grid-column:1/-1"><label>Description (optional)</label><textarea name="description" rows="2" placeholder="Ingredients or short description"></textarea></div><div><label>Availability</label><select name="available"><option value="yes">Available on menu</option><option value="no">Temporarily unavailable</option></select></div></div><button id="menuSaveBtn" class="primary" style="margin-top:15px" type="submit">Save menu item</button> <button id="menuCancelEdit" type="button" class="hidden">Cancel edit</button><span id="menuItemMsg" class="msg"></span></form></div><div class="panel"><h3 id="menuItemsCount">Menu items (0)</h3><div id="menuItemsList"></div></div>`;
   $("menuCancelEdit").onclick=resetForm;
   $("menuPicture").onchange=e=>{
     const file=e.target.files?.[0];if(!file)return;
@@ -395,21 +360,24 @@ async function productsPage(){
     if(file.size>2*1024*1024){e.target.value="";say("menuItemMsg","Image must be 2 MB or smaller. Please choose a smaller picture.");return}
     const reader=new FileReader();reader.onload=()=>{pictureData=String(reader.result||"");$("menuPicturePreview").innerHTML=`<img src="${pictureData}" alt="Menu picture preview" style="display:block;max-width:180px;max-height:130px;object-fit:cover;border-radius:8px"><span class="muted">Picture selected</span>`};reader.onerror=()=>say("menuItemMsg","Could not read this picture. Please try another file.");reader.readAsDataURL(file);
   };
-  $("menuItemForm").onsubmit=e=>{
+  $("menuItemForm").onsubmit=async e=>{
     e.preventDefault();const f=new FormData(e.currentTarget),name=String(f.get("name")||"").trim(),price=Number(f.get("price"));
     if(!name||!Number.isFinite(price)||price<=0){say("menuItemMsg","Enter a menu name and a valid selling price.");return}
-    const items=readMenu(),data={name,category:String(f.get("category")||"Other"),price,description:String(f.get("description")||"").trim(),image:pictureData,available:f.get("available")==="yes"};
-    try{if(editingId!==null){const index=items.findIndex(x=>String(x.id)===String(editingId));if(index<0)throw Error("Menu item was not found.");items[index]={...items[index],...data};localStorage.setItem(key,JSON.stringify(items));say("menuItemMsg","Menu item updated.")}else{items.unshift({id:`${Date.now()}_${Math.random().toString(36).slice(2,8)}`,...data,created_at:new Date().toISOString()});localStorage.setItem(key,JSON.stringify(items));say("menuItemMsg","Menu item saved.")}resetForm();renderMenu()}
-    catch(err){say("menuItemMsg","Could not save. The browser may be out of storage space; try a smaller picture.")}
+    const payload={business_id:business.id,name,category:String(f.get("category")||"Other"),price,description:String(f.get("description")||"").trim(),image:pictureData,available:f.get("available")==="yes"};
+    const btn=$("menuSaveBtn");btn.disabled=true;
+    try{
+      if(editingId!==null){const {data,error}=await db.from("restaurant_menu_items").update(payload).eq("id",editingId).eq("business_id",business.id).select("id,business_id,name,category,price,description,image,available,created_at").single();if(error)throw error;items=items.map(x=>String(x.id)===String(editingId)?data:x);say("menuItemMsg","Menu item updated in cloud.");}
+      else {const id=`${Date.now()}_${Math.random().toString(36).slice(2,8)}`;const {data,error}=await db.from("restaurant_menu_items").insert({id,...payload}).select("id,business_id,name,category,price,description,image,available,created_at").single();if(error)throw error;items.unshift(data);say("menuItemMsg","Menu item saved to cloud.");}
+      resetForm();renderMenu();
+    }catch(err){say("menuItemMsg","Could not save menu item: "+(err.message||err)+". Confirm the SQL setup is installed.");}
+    finally{btn.disabled=false;}
   };
   renderMenu();
 }
 async function renderPOS(){
   await getProducts();
   cart=[];
-  const menuKey=`wizo_menu_items_${business.id}`;
-  const readRestaurantMenu=()=>{try{return JSON.parse(localStorage.getItem(menuKey)||"[]").filter(x=>x.available!==false)}catch{return []}};
-  const restaurantMenu=readRestaurantMenu().map(x=>({...x,id:`menu_${x.id}`,menu_only:true,unit:"item",selling_price:Number(x.price)||0,cost_price:0,stock_quantity:0,sku:""}));
+  const restaurantMenu=(await getRestaurantMenu()).filter(x=>x.available!==false).map(x=>({...x,id:`menu_${x.id}`,menu_only:true,unit:"item",selling_price:Number(x.price)||0,cost_price:0,stock_quantity:0,sku:""}));
   // POS is for restaurant menu items only. Purchases are recorded separately and are not sold directly from this screen.
   const allItems=restaurantMenu;
   $("content").innerHTML=`<div class="pos"><div class="panel"><div class="row"><div><label>Search menu / barcode</label><input id="menuSearch" placeholder="Type product or menu item"></div><div><label>Category</label><select id="categoryFilter"><option value="">All categories</option>${[...new Set(allItems.map(p=>p.category).filter(Boolean))].map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></div></div><div id="menuGrid" class="menuitems" style="margin-top:12px"></div><p class="muted" style="margin-top:10px">Click an item to add it to the current order.</p></div><div class="panel"><h3>Current order</h3><div class="formgrid"><div><label>Table / order no.</label><input id="tableNo" placeholder="Takeaway / Table 1"></div><div><label>Customer</label><input id="saleCustomer" placeholder="Optional customer name"></div><div><label>Payment</label><select id="payment"><option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="credit">Credit</option></select></div><div><label>Discount</label><input id="discount" type="number" min="0" step=".01" value="0"></div></div><div id="cartItems" style="margin-top:15px"></div><div class="row" style="margin-top:15px"><span class="muted">Subtotal</span><b id="subtotal">${money(0)}</b></div><div class="row"><span class="muted">Total</span><strong class="total" id="cartTotal">${money(0)}</strong></div><div class="actionbar"><button id="clearCart">Clear</button><button id="holdSaleBtn" type="button" style="background:#d99000;color:#fff;border-color:#d99000;font-weight:800">⏸ Hold</button><button id="recallSaleBtn" type="button" style="background:#15803d;color:#fff;border-color:#15803d;font-weight:800">↶ Recall <span id="heldCount"></span></button><button id="payBtn" class="primary">💳 Pay & save sale</button></div><p class="muted" id="saleMsg" style="margin-top:10px"></p></div></div>`;
@@ -674,7 +642,7 @@ async function salesPage(){
   const {from,to}=dateRangeBounds();query=query.gte("created_at",from.toISOString()).lt("created_at",to.toISOString());
   const {data,error}=await query;if(error)throw error;
   const rows=data||[];
-  $("content").innerHTML=`<div class="panel"><h3>Sales history</h3><div class="tablewrap"><table><thead><tr><th>Invoice</th><th>Table / Order</th><th>Total</th><th>Payment</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>${rows.map(s=>`<tr><td>${esc(s.invoice_number||"")}</td><td>${esc(s.table_label||"—")}</td><td>${money(s.total)}</td><td>${esc(s.payment_method||"")}</td><td>${esc(s.status||"")}</td><td>${s.created_at?new Date(s.created_at).toLocaleString():"—"}</td><td><div class="row" style="min-width:230px"><button type="button" data-print-sale="${esc(s.id)}">🖨 Print</button>${isOwnerRole()?`<button type="button" data-edit-sale="${esc(s.id)}">Edit</button><button type="button" class="danger" data-delete-sale="${esc(s.id)}">Delete</button>`:""}</div></td></tr>`).join("")||`<tr><td colspan="7">No sales found.</td></tr>`}</tbody></table></div><p id="salesEditMsg" class="msg"></p></div><div id="saleEditPanel" class="panel hidden"><h3>Edit sale</h3><form id="saleEditForm"><input type="hidden" name="id"><div class="formgrid"><div><label>Invoice number</label><input name="invoice_number" disabled></div><div><label>Total (${esc(profile.currency||"ETB")})</label><input name="total" type="number" min="0" step=".01" required></div><div><label>Payment method</label><select name="payment_method"><option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="credit">Credit</option></select></div><div><label>Table / order</label><input name="table_label"></div><div><label>Status</label><select name="status"><option value="completed">Completed</option><option value="pending">Pending</option><option value="cancelled">Cancelled</option></select></div></div><button class="primary" style="margin-top:12px" type="submit">Save changes</button> <button id="cancelSaleEdit" type="button">Cancel</button><span id="saleEditFormMsg" class="msg"></span></form><p class="muted" style="margin-top:10px">Editing the sale total changes the recorded total only; original item lines and stock quantities are not recalculated.</p></div>`;
+  $("content").innerHTML=`<div class="panel"><h3>Sales history</h3><div class="tablewrap"><table><thead><tr><th>Invoice</th><th>Table / Order</th><th>Total</th><th>Payment</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead><tbody>${rows.map(s=>`<tr><td>${esc(s.invoice_number||"")}</td><td>${esc(s.table_label||"—")}</td><td>${money(s.total)}</td><td>${esc(s.payment_method||"")}</td><td>${esc(s.status||"")}</td><td>${s.created_at?new Date(s.created_at).toLocaleString():"—"}</td><td><div class="row" style="min-width:230px"><button type="button" data-print-sale="${esc(s.id)}">🖨 Print</button>${isOwnerRole()?`<button type="button" data-edit-sale="${esc(s.id)}">Edit</button><button type="button" class="danger" data-delete-sale="${esc(s.id)}">Delete</button>`:""}</div></td></tr>`).join("")||`<tr><td colspan="7">No sales found.</td></tr>`}</tbody></table></div><p id="salesEditMsg" class="msg"></p></div><div id="saleEditPanel" class="panel hidden"><h3>Edit sale</h3><form id="saleEditForm"><input type="hidden" name="id"><div class="formgrid"><div><label>Invoice number</label><input name="invoice_number" disabled></div><div><label>Total (${esc(profile.currency||"ETB")})</label><input name="total" type="number" min="0" step=".01" required readonly></div><div><label>Payment method</label><select name="payment_method"><option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="credit">Credit</option></select></div><div><label>Table / order</label><input name="table_label"></div><div><label>Status</label><select name="status"><option value="completed">Completed</option><option value="pending">Pending</option><option value="cancelled">Cancelled</option></select></div></div><button class="primary" style="margin-top:12px" type="submit">Save changes</button> <button id="cancelSaleEdit" type="button">Cancel</button><span id="saleEditFormMsg" class="msg"></span></form><p class="muted" style="margin-top:10px">The recorded total is read-only here to keep it consistent with the original sale items and stock. Change payment method, table/order, or status as needed.</p></div>`;
   // Print an existing receipt from Sales History for both Owner and Cashier.
   $("content").querySelectorAll("[data-print-sale]").forEach(btn=>btn.onclick=async()=>{
     const sale=rows.find(x=>String(x.id)===btn.dataset.printSale);if(!sale)return;
@@ -797,7 +765,7 @@ async function budgetPage(){
  if(!isOwnerRole())throw Error("Owner/Admin only.");
  const [sales,expenses,purchases]=await Promise.all([q("sales"),q("expenses"),q("purchases")]);
  const completed=sales.filter(x=>x.status==="completed");
- const revenue=completed.reduce((a,x)=>a+Number(x.total||0),0),directPurchaseTotal=expenses.filter(x=>String(x.category||"").toLowerCase()==="direct purchase").reduce((a,x)=>a+Number(x.amount||0),0),purchaseTotal=purchases.reduce((a,x)=>a+Number(x.total_cost||0),0)+directPurchaseTotal;
+ const revenue=completed.reduce((a,x)=>a+Number(x.total||0),0),directPurchaseTotal=expenses.filter(x=>String(x.category||"").toLowerCase()==="direct purchase").reduce((a,x)=>a+Number(x.amount||0),0),purchaseTotal=purchases.reduce((a,x)=>a+Number(x.total_cost||0),0)+directPurchaseTotal,expenseTotal=expenses.reduce((a,x)=>a+Number(x.amount||0),0),nonPurchaseExpenses=Math.max(0,expenseTotal-directPurchaseTotal);
  const localKey=`wizo_budget_${business.id}`,localHistoryKey=`wizo_budget_history_${business.id}`;
  let {data:budgetRow,error}=await db.from("wizo_budgets").select("business_id,amount,updated_at,updated_by").eq("business_id",business.id).maybeSingle();if(error)throw error;
  let {data:history,error:histErr}=await db.from("wizo_budget_history").select("id,business_id,previous_amount,amount,created_at,created_by,budget_name,notes,budget_date").eq("business_id",business.id).order("created_at",{ascending:false});if(histErr)throw histErr;history=history||[];
@@ -805,13 +773,13 @@ async function budgetPage(){
  if(!history.length){let oldHistory=[];try{oldHistory=JSON.parse(localStorage.getItem(localHistoryKey)||"[]")}catch{};if(Array.isArray(oldHistory)&&oldHistory.length){const rows=oldHistory.slice(0,100).map(h=>({business_id:business.id,previous_amount:Math.max(0,Number(h.previous)||0),amount:Math.max(0,Number(h.amount)||0),created_at:h.date||new Date().toISOString(),created_by:currentUser.id,budget_name:String(h.name||"Budget"),notes:String(h.notes||""),budget_date:h.dateOnly||null}));const result=await db.from("wizo_budget_history").insert(rows).select("id,business_id,previous_amount,amount,created_at,created_by,budget_name,notes,budget_date");if(result.error)throw result.error;history=(result.data||[]).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));}}
  let budgetAmount=Math.max(0,Number(budgetRow?.amount||0));
  if(!budgetRow){const oldAmount=Math.max(0,Number(localStorage.getItem(localKey)||0));if(oldAmount>0){const result=await db.from("wizo_budgets").upsert({business_id:business.id,amount:oldAmount,updated_by:currentUser.id},{onConflict:"business_id"}).select("business_id,amount,updated_at,updated_by").single();if(result.error)throw result.error;budgetRow=result.data;budgetAmount=oldAmount;}}
- let balance=budgetAmount-purchaseTotal;
- const drawStats=()=>{balance=budgetAmount-purchaseTotal;const stats=$("content").querySelectorAll(".stats .stat strong");if(stats[0])stats[0].textContent=money(budgetAmount);if(stats[2]){stats[2].textContent=money(balance);stats[2].style.color=balance<0?"var(--red)":"var(--lime)"}const pct=budgetAmount>0?Math.min(100,purchaseTotal/budgetAmount*100):0;if($("budgetBar"))$("budgetBar").style.width=pct+"%";if($("budgetProgress"))$("budgetProgress").textContent=budgetAmount>0?`${pct.toFixed(1)}% of budget used · Balance: ${money(balance)}`:"Enter a budget amount to calculate the balance."};
- $("content").innerHTML=`<div class="stats"><div class="stat"><small>BUDGET</small><strong>${money(budgetAmount)}</strong></div><div class="stat"><small>PURCHASES</small><strong>${money(purchaseTotal)}</strong></div><div class="stat"><small>BALANCE (BUDGET − PURCHASES)</small><strong style="color:${balance<0?'var(--red)':'var(--lime)'}">${money(balance)}</strong></div><div class="stat"><small>SALES REVENUE</small><strong>${money(revenue)}</strong></div></div><div class="panel"><h3>Budget planning</h3><p class="muted">Budget and history are saved to Supabase Cloud for this business account, so they are available on other devices after sign-in.</p><form id="budgetForm"><div class="formgrid"><div><label>Budget name *</label><input id="budgetName" name="budget_name" maxlength="120" placeholder="e.g. Monthly stock budget" required></div><div><label>Budget amount to add (${esc(profile.currency||"ETB")}) *</label><input id="budgetTarget" name="amount" type="number" min="0.01" step="0.01" placeholder="Enter amount to add" required></div><div><label>Budget date *</label><input id="budgetDate" name="date" type="date" required value="${today()}"></div><div style="grid-column:1/-1"><label>Description / Notes</label><textarea id="budgetNotes" name="notes" maxlength="500" rows="2" placeholder="Optional details about this budget"></textarea></div></div><p class="muted">Current budget: <strong>${money(budgetAmount)}</strong>. The amount entered will be added to the current budget.</p><button class="primary" type="submit" style="margin-top:12px">＋ Add budget</button><span id="budgetMsg" class="msg"></span></form><div style="margin-top:18px"><p>Budget usage</p><div style="height:12px;background:#d1fae5;border-radius:8px;overflow:hidden"><div id="budgetBar" style="height:100%;width:0;background:var(--gold)"></div></div><p id="budgetProgress" class="muted" style="margin-top:8px"></p><button type="button" id="budgetDashboard" style="margin-top:8px">View Dashboard</button></div></div><div class="panel"><h3>Budget History</h3><p class="muted">History is saved in Supabase Cloud and follows this business account.</p><div id="budgetHistoryEditor" class="panel hidden" style="margin-bottom:14px;background:var(--panel2)"></div><div id="budgetHistory"></div></div>`;
+ let balance=budgetAmount-purchaseTotal-nonPurchaseExpenses;
+ const drawStats=()=>{balance=budgetAmount-purchaseTotal-nonPurchaseExpenses;const stats=$("content").querySelectorAll(".stats .stat strong");if(stats[0])stats[0].textContent=money(budgetAmount);if(stats[2]){stats[2].textContent=money(balance);stats[2].style.color=balance<0?"var(--red)":"var(--lime)"}const pct=budgetAmount>0?Math.min(100,purchaseTotal/budgetAmount*100):0;if($("budgetBar"))$("budgetBar").style.width=pct+"%";if($("budgetProgress"))$("budgetProgress").textContent=budgetAmount>0?`${pct.toFixed(1)}% of budget used · Balance: ${money(balance)}`:"Enter a budget amount to calculate the balance."};
+ $("content").innerHTML=`<div class="stats"><div class="stat"><small>BUDGET</small><strong>${money(budgetAmount)}</strong></div><div class="stat"><small>PURCHASES</small><strong>${money(purchaseTotal)}</strong></div><div class="stat"><small>BALANCE (BUDGET − PURCHASES − EXPENSES)</small><strong style="color:${balance<0?'var(--red)':'var(--lime)'}">${money(balance)}</strong></div><div class="stat"><small>SALES REVENUE</small><strong>${money(revenue)}</strong></div></div><div class="panel"><h3>Budget planning</h3><p class="muted">Budget and history are saved to Supabase Cloud. Balance subtracts purchase costs and expenses, excluding direct-purchase expenses already counted in Purchase Cost.</p><form id="budgetForm"><div class="formgrid"><div><label>Budget name *</label><input id="budgetName" name="budget_name" maxlength="120" placeholder="e.g. Monthly stock budget" required></div><div><label>Budget amount to add (${esc(profile.currency||"ETB")}) *</label><input id="budgetTarget" name="amount" type="number" min="0.01" step="0.01" placeholder="Enter amount to add" required></div><div><label>Budget date *</label><input id="budgetDate" name="date" type="date" required value="${today()}"></div><div style="grid-column:1/-1"><label>Description / Notes</label><textarea id="budgetNotes" name="notes" maxlength="500" rows="2" placeholder="Optional details about this budget"></textarea></div></div><p class="muted">Current budget: <strong>${money(budgetAmount)}</strong>. The amount entered will be added to the current budget.</p><button class="primary" type="submit" style="margin-top:12px">＋ Add budget</button><span id="budgetMsg" class="msg"></span></form><div style="margin-top:18px"><p>Budget usage</p><div style="height:12px;background:#d1fae5;border-radius:8px;overflow:hidden"><div id="budgetBar" style="height:100%;width:0;background:var(--gold)"></div></div><p id="budgetProgress" class="muted" style="margin-top:8px"></p><button type="button" id="budgetDashboard" style="margin-top:8px">View Dashboard</button></div></div><div class="panel"><h3>Budget History</h3><p class="muted">History is saved in Supabase Cloud and follows this business account.</p><div id="budgetHistoryEditor" class="panel hidden" style="margin-bottom:14px;background:var(--panel2)"></div><div id="budgetHistory"></div></div>`;
  drawStats();
  const renderHistory=()=>{const el=$("budgetHistory");if(!history.length){el.innerHTML='<p class="muted">No budget changes recorded yet. Save a budget to start the history.</p>';return;}el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Budget name</th><th>Previous budget</th><th>Added amount</th><th>New total</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${history.map(h=>`<tr><td>${esc(h.budget_date||new Date(h.created_at).toLocaleDateString())}</td><td>${esc(h.budget_name||"Budget")}</td><td>${money(h.previous_amount)}</td><td>+${money(Number(h.amount)-Number(h.previous_amount))}</td><td>${money(h.amount)}</td><td>${esc(h.notes||"—")}</td><td><div class="row"><button type="button" data-edit-cloud-budget="${esc(h.id)}">Edit</button><button type="button" class="danger" data-delete-cloud-budget="${esc(h.id)}">Delete</button></div></td></tr>`).join("")}</tbody></table></div>`;
  el.querySelectorAll("[data-edit-cloud-budget]").forEach(btn=>btn.onclick=()=>{const h=history.find(x=>String(x.id)===btn.dataset.editCloudBudget);if(!h)return;const editor=$("budgetHistoryEditor");editor.classList.remove("hidden");editor.innerHTML=`<h3>Edit budget history entry</h3><form id="cloudBudgetEditForm"><div class="formgrid"><div><label>Budget name</label><input name="name" maxlength="120" value="${esc(h.budget_name||"Budget")}" required></div><div><label>Previous budget</label><input name="previous" type="number" min="0" step=".01" value="${esc(h.previous_amount)}" required></div><div><label>New total</label><input name="amount" type="number" min="0" step=".01" value="${esc(h.amount)}" required></div><div><label>Date</label><input name="date" type="date" value="${esc(h.budget_date||String(h.created_at).slice(0,10))}" required></div><div style="grid-column:1/-1"><label>Notes</label><textarea name="notes" maxlength="500" rows="2">${esc(h.notes||"")}</textarea></div></div><button class="primary" type="submit">Save changes</button> <button type="button" id="cancelCloudBudgetEdit">Cancel</button><span id="cloudBudgetEditMsg" class="msg"></span></form>`;$("cancelCloudBudgetEdit").onclick=()=>editor.classList.add("hidden");$("cloudBudgetEditForm").onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),previous=Number(f.get("previous")),amount=Number(f.get("amount"));if(previous<0||amount<0||!Number.isFinite(previous)||!Number.isFinite(amount)){say("cloudBudgetEditMsg","Enter valid non-negative amounts.");return;}const {error}=await db.from("wizo_budget_history").update({budget_name:String(f.get("name")||"Budget").trim(),previous_amount:previous,amount,budget_date:String(f.get("date")),notes:String(f.get("notes")||"").trim()}).eq("id",h.id).eq("business_id",business.id);if(error){say("cloudBudgetEditMsg",error.message);return;}history=history.map(x=>String(x.id)===String(h.id)?{...x,budget_name:String(f.get("name")||"Budget").trim(),previous_amount:previous,amount,budget_date:String(f.get("date")),notes:String(f.get("notes")||"").trim()}:x);if(history[0]&&String(history[0].id)===String(h.id)){budgetAmount=amount;const {error:be}=await db.from("wizo_budgets").upsert({business_id:business.id,amount,updated_by:currentUser.id},{onConflict:"business_id"});if(be){say("cloudBudgetEditMsg",be.message);return;}}editor.classList.add("hidden");drawStats();renderHistory();};editor.scrollIntoView({behavior:"smooth",block:"start"});});
- el.querySelectorAll("[data-delete-cloud-budget]").forEach(btn=>btn.onclick=async()=>{const i=history.findIndex(h=>String(h.id)===btn.dataset.deleteCloudBudget);if(i<0)return;const h=history[i];/* Treat an entry as the current budget change when its recorded total matches the current cloud budget. This is reliable even when multiple entries share the same date. */const affectsCurrent=Math.abs(Number(h.amount)-Number(budgetAmount))<0.005;if(!confirm(affectsCurrent?"Delete this budget history entry and restore the current budget to its previous amount?":"Delete this older history entry? Current budget will stay unchanged."))return;btn.disabled=true;const {error}=await db.from("wizo_budget_history").delete().eq("id",h.id).eq("business_id",business.id);if(error){btn.disabled=false;alert("Could not delete history: "+error.message);return;}history.splice(i,1);if(affectsCurrent){budgetAmount=Math.max(0,Number(h.previous_amount)||0);const {error:be}=await db.from("wizo_budgets").upsert({business_id:business.id,amount:budgetAmount,updated_by:currentUser.id},{onConflict:"business_id"});if(be){alert("History deleted, but current budget could not be updated: "+be.message);return;}}drawStats();renderHistory();say("budgetMsg",affectsCurrent?"Budget history deleted; current budget restored to previous amount.":"History entry deleted; current budget unchanged.");});};
+ el.querySelectorAll("[data-delete-cloud-budget]").forEach(btn=>btn.onclick=async()=>{const i=history.findIndex(h=>String(h.id)===btn.dataset.deleteCloudBudget);if(i<0)return;const h=history[i];/* Treat an entry as the current budget change when its recorded total matches the current cloud budget. This is reliable even when multiple entries share the same date. */if(!confirm("Delete this budget history entry? The current budget amount will remain unchanged."))return;btn.disabled=true;const {error}=await db.from("wizo_budget_history").delete().eq("id",h.id).eq("business_id",business.id);if(error){btn.disabled=false;alert("Could not delete history: "+error.message);return;}history.splice(i,1);drawStats();renderHistory();say("budgetMsg","Budget history entry deleted. Current budget remains unchanged.");});};
  renderHistory();$("budgetDashboard").onclick=()=>showPage("Dashboard");
  $("budgetForm").onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget),added=Number(f.get("amount")),name=String(f.get("budget_name")||"").trim(),dateOnly=String(f.get("date")||""),notes=String(f.get("notes")||"").trim();if(!name||!dateOnly||!Number.isFinite(added)||added<=0){say("budgetMsg","Enter budget name, date, and an amount greater than zero.");return;}const previous=budgetAmount,total=previous+added;const btn=e.currentTarget.querySelector("button[type=submit]");btn.disabled=true;say("budgetMsg","Saving budget to cloud…");try{const {error:saveError}=await db.from("wizo_budgets").upsert({business_id:business.id,amount:total,updated_by:currentUser.id},{onConflict:"business_id"});if(saveError)throw saveError;const {data:newEntry,error:entryError}=await db.from("wizo_budget_history").insert({business_id:business.id,previous_amount:previous,amount:total,created_by:currentUser.id,budget_name:name,notes,budget_date:dateOnly,created_at:new Date(dateOnly+"T12:00:00").toISOString()}).select("id,business_id,previous_amount,amount,created_at,created_by,budget_name,notes,budget_date").single();if(entryError)throw entryError;budgetAmount=total;history.unshift(newEntry);history.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));history=history.slice(0,100);$("budgetForm").reset();$("budgetDate").value=today();say("budgetMsg","Budget saved to Supabase Cloud. Total budget: "+money(total));drawStats();renderHistory();}catch(err){say("budgetMsg","Could not save budget to cloud: "+(err.message||err));}finally{btn.disabled=false;}};
 }
@@ -929,8 +897,56 @@ function settingsPage(){$("content").innerHTML=`<div class="panel"><h3>Business 
 <div class="panel"><h3>Backup & Restore Data</h3><p class="muted">Download a backup of this business data or restore from a WIZO OMEGA POS JSON backup file.</p><button type="button" class="primary" id="backupDataBtn">Download Backup</button> <label for="restoreDataFile" class="btn">Choose backup file</label><input id="restoreDataFile" type="file" accept=".json,application/json" style="display:none"><button type="button" id="restoreDataBtn">Restore Data</button><span id="dataToolsMsg" class="msg"></span></div>
 <div class="panel"><h3>Delete Business Data</h3><p class="muted">This permanently deletes sales, purchases and purchase items, expenses, employees, products/menu items, customers, suppliers, and all cloud budget amounts/history for this business. Business name, business settings, and login account are kept. Download a backup first.</p><label>Type DELETE to confirm</label><input id="deleteDataConfirm" placeholder="DELETE"><button type="button" id="deleteDataBtn" style="margin-top:10px;background:#b91c1c;color:white">Delete Data</button><span id="deleteDataMsg" class="msg"></span></div>`;
 $("settingsForm").onsubmit=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const {error}=await db.from("businesses").update({name:f.get("name"),phone:f.get("phone")||null,address:f.get("address")||null,currency:f.get("currency"),logo_url:f.get("logo_url")||null}).eq("id",business.id);if(error)throw error;await loadBusiness();say("settingsMsg","Settings saved.")}catch(err){say("settingsMsg",err.message)}};
-$("backupDataBtn").onclick=async()=>{const btn=$("backupDataBtn");btn.disabled=true;say("dataToolsMsg","Creating backup…");try{const tables=["products","suppliers","customers","employees","purchases","sales","expenses"];const backup={app:"WIZO OMEGA POS",version:1,business_id:business.id,created_at:new Date().toISOString(),data:{}};for(const table of tables){const {data,error}=await db.from(table).select("*").eq("business_id",business.id);if(error&&error.code!=="42P01")throw error;backup.data[table]=data||[]}const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="WIZO_OMEGA_POS_backup_"+new Date().toISOString().slice(0,10)+".json";a.click();URL.revokeObjectURL(url);say("dataToolsMsg","Backup downloaded.")}catch(err){say("dataToolsMsg","Backup failed: "+(err.message||err))}finally{btn.disabled=false}};
-$("restoreDataBtn").onclick=async()=>{const file=$("restoreDataFile").files[0];if(!file){say("dataToolsMsg","Choose a backup JSON file first.");return}if(!confirm("Restore records from this backup? Existing records with the same IDs may be updated."))return;const btn=$("restoreDataBtn");btn.disabled=true;say("dataToolsMsg","Restoring backup…");try{const backup=JSON.parse(await file.text());if(backup.app!=="WIZO OMEGA POS"||!backup.data||!backup.business_id)throw new Error("This is not a valid WIZO OMEGA POS backup.");const tables=["products","suppliers","customers","employees","purchases","sales","expenses"];for(const table of tables){const rows=backup.data[table]||[];if(!rows.length)continue;if(rows.some(r=>r.business_id!==business.id))throw new Error("Backup belongs to a different business. Restore stopped.");const {error}=await db.from(table).upsert(rows,{onConflict:"id"});if(error)throw new Error(table+": "+error.message)}say("dataToolsMsg","Restore finished. Refresh the page to see restored data.")}catch(err){say("dataToolsMsg","Restore failed: "+(err.message||err))}finally{btn.disabled=false}};
+const BACKUP_TABLES=["products","suppliers","customers","employees","purchases","purchase_items","sales","sale_items","expenses","wizo_held_sales","wizo_budgets","wizo_budget_history","restaurant_menu_items"];
+const backupData=$("backupDataBtn");
+backupData.onclick=async()=>{
+ const btn=backupData;btn.disabled=true;say("dataToolsMsg","Creating full business backup…");
+ try{
+  const backup={app:"WIZO OMEGA POS",version:2,business_id:business.id,created_at:new Date().toISOString(),data:{}};
+  for(const table of BACKUP_TABLES){
+   const {data,error}=await db.from(table).select("*").eq("business_id",business.id);
+   if(error&&error.code!=="42P01")throw new Error(table+": "+error.message);
+   backup.data[table]=data||[];
+  }
+  // Keep old browser menu/budget records in the export for recoverability during migration.
+  for(const key of [`wizo_menu_items_${business.id}`,`wizo_budget_${business.id}`,`wizo_budget_history_${business.id}`]){
+   try{backup.local_data=backup.local_data||{};backup.local_data[key]=localStorage.getItem(key)}catch{}
+  }
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download="WIZO_OMEGA_POS_full_backup_"+new Date().toISOString().slice(0,10)+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  say("dataToolsMsg","Full backup downloaded. It includes parent and child records, cloud menu and budget history.");
+ }catch(err){say("dataToolsMsg","Backup failed: "+(err.message||err))}
+ finally{btn.disabled=false}
+};
+$("restoreDataBtn").onclick=async()=>{
+ const file=$("restoreDataFile").files[0];if(!file){say("dataToolsMsg","Choose a backup JSON file first.");return}
+ if(!confirm("Restore this backup into the current business? Existing records with matching IDs may be updated. Review the business ID before proceeding."))return;
+ const btn=$("restoreDataBtn");btn.disabled=true;say("dataToolsMsg","Validating backup…");
+ try{
+  const backup=JSON.parse(await file.text());
+  if(backup.app!=="WIZO OMEGA POS"||!backup.data||!backup.business_id)throw new Error("This is not a valid WIZO OMEGA POS backup.");
+  if(String(backup.business_id)!==String(business.id))throw new Error("Backup belongs to a different business. Restore stopped.");
+  // Restore parents before children to respect foreign keys; scope every batch to this business.
+  const restoreOrder=["products","suppliers","customers","employees","purchases","sales","expenses","purchase_items","sale_items","wizo_held_sales","wizo_budgets","wizo_budget_history","restaurant_menu_items"];
+  for(const table of restoreOrder){
+   const rows=backup.data[table]||[];if(!Array.isArray(rows))throw new Error("Invalid records for "+table);
+   if(!rows.length)continue;
+   if(rows.some(r=>String(r.business_id)!==String(business.id)))throw new Error("Backup has records for another business in "+table+". Restore stopped.");
+   const {error}=await db.from(table).upsert(rows,{onConflict:table==="wizo_budgets"?"business_id":"id"});
+   if(error&&error.code==="42P01")continue;
+   if(error)throw new Error(table+": "+error.message);
+  }
+  // Restore old local-only values only when they are included in this backup.
+  if(backup.local_data&&typeof backup.local_data==="object"){
+   for(const [key,value] of Object.entries(backup.local_data)){
+    if(!key.endsWith("_"+business.id))continue;
+    if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,String(value));
+   }
+  }
+  say("dataToolsMsg","Restore completed. Refresh the app to reload restored data.");
+ }catch(err){say("dataToolsMsg","Restore failed: "+(err.message||err)+". Some earlier batches may already have restored; this operation is not atomic.")}
+ finally{btn.disabled=false}
+};
 $("deleteDataBtn").onclick=async()=>{
   if($("deleteDataConfirm").value.trim()!=="DELETE"){say("deleteDataMsg",'Type DELETE exactly to confirm.');return}
   if(!confirm("FINAL WARNING: This permanently deletes all sales, purchases, purchase items, expenses, employees, products/menu items, customers, suppliers, and budget history for THIS business. The business profile/settings and your login account will remain. Continue?"))return;
@@ -938,7 +954,7 @@ $("deleteDataBtn").onclick=async()=>{
   try{
     // Delete child rows first, then their parent rows, to respect foreign keys.
     // Every database delete is scoped to the current business only.
-    for(const table of ["wizo_held_sales","sale_items","purchase_items","sales","purchases","expenses","employees","customers","suppliers","products"]){
+    for(const table of ["wizo_held_sales","sale_items","purchase_items","sales","purchases","expenses","employees","customers","suppliers","restaurant_menu_items","products"]){
       const {error}=await db.from(table).delete().eq("business_id",business.id);
       if(error&&error.code!=="42P01")throw new Error(table+": "+error.message);
     }
