@@ -42,6 +42,53 @@
 .admin-compact-panel .msg{font-size:11px;min-height:14px;margin-top:5px}
 @media(max-width:700px){.admin-compact-panel{padding:9px}.admin-compact-panel .formgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:430px){.admin-compact-panel .formgrid{grid-template-columns:1fr}}
+
+/* WIZO OMEGA POS — cloud-first data and consistent scrolling */
+html{min-height:100%;scroll-behavior:smooth}
+body{min-height:100vh;overflow-x:hidden}
+.shell{min-height:100vh;align-items:start}
+.shell>aside{position:sticky;top:0;height:100vh;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.shell>aside nav{min-height:0}
+.main{min-width:0;min-height:100vh;overflow:visible}
+#content{min-width:0;width:100%}
+#content>*{min-width:0}
+.panel,.stat{overflow-wrap:anywhere}
+.tablewrap{max-width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch}
+.tablewrap table{min-width:max-content}
+.pos{min-width:0;align-items:start}
+.pos>.panel{min-width:0}
+.pos>.panel:first-child{display:flex;flex-direction:column;min-height:0}
+#menuGrid{max-height:calc(100vh - 300px);min-height:180px;overflow-y:auto;overflow-x:hidden;align-content:start;padding:2px 5px 8px 2px;overscroll-behavior:contain;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+#menuGrid .menuitem{width:100%;min-width:0;max-width:none}
+#cartItems{max-height:calc(100vh - 390px);min-height:70px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:4px;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+.cartrow{min-width:0}
+.cartrow>div{overflow-wrap:anywhere}
+#content .panel .tablewrap{margin-top:8px}
+#content img{max-width:100%}
+@media(max-width:900px){
+ .shell{display:block;min-height:100vh}
+ .shell>aside{position:relative;top:auto;height:auto;max-height:none;overflow:visible}
+ .shell>aside nav{display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;padding-bottom:5px;-webkit-overflow-scrolling:touch}
+ .shell>aside nav button{flex:0 0 auto}
+ .main{min-height:0}
+ .pos{grid-template-columns:minmax(0,1fr)}
+ #menuGrid{max-height:65vh;min-height:220px}
+ #cartItems{max-height:55vh}
+}
+@media(max-width:600px){
+ .main{padding:10px}
+ .pos{gap:10px}
+ .pos>.panel{padding:12px}
+ #menuGrid{grid-template-columns:repeat(2,minmax(0,1fr));max-height:60vh}
+ #cartItems{max-height:45vh}
+ .cartrow{grid-template-columns:minmax(0,1fr) auto auto auto auto;gap:5px}
+ .actionbar button{min-width:90px}
+}
+@media(max-height:700px) and (min-width:901px){
+ #menuGrid{max-height:calc(100vh - 245px)}
+ #cartItems{max-height:calc(100vh - 330px)}
+}
+
 </style>
 </head>
 <body>
@@ -311,25 +358,28 @@ async function getRestaurantMenu(){
     .eq("business_id",business.id).order("created_at",{ascending:false});
   if(error)throw error;
   let items=data||[];
-  // Preserve and migrate legacy browser-only menu entries once, when the cloud menu is empty.
-  if(!items.length){
-    let legacy=[];
-    try{legacy=JSON.parse(localStorage.getItem(key)||"[]")}catch{}
-    if(Array.isArray(legacy)&&legacy.length){
-      const rows=legacy.map(x=>({
-        id:String(x.id||`${Date.now()}_${Math.random().toString(36).slice(2,8)}`),
-        business_id:business.id,name:String(x.name||"").trim(),
-        category:String(x.category||"Other"),price:Number(x.price||0),
-        description:String(x.description||""),image:String(x.image||""),
-        available:x.available!==false,created_at:x.created_at||new Date().toISOString()
-      })).filter(x=>x.name&&Number.isFinite(x.price)&&x.price>0);
-      if(rows.length){
-        const {data:migrated,error:migrateError}=await db.from("restaurant_menu_items").upsert(rows,{onConflict:"id"}).select("id,business_id,name,category,price,description,image,available,created_at");
-        if(migrateError)throw migrateError;
-        items=migrated||[];
-      }
+  // One-time compatibility migration from the legacy browser cache to Supabase.
+  // The browser copy is cleared only after a successful cloud migration (or when
+  // the cloud already contains the authoritative menu).
+  let legacy=[];
+  try{legacy=JSON.parse(localStorage.getItem(key)||"[]")}catch{}
+  if(Array.isArray(legacy)&&legacy.length){
+    const rows=legacy.map(x=>({
+      id:String(x.id||`${Date.now()}_${Math.random().toString(36).slice(2,8)}`),
+      business_id:business.id,name:String(x.name||"").trim(),
+      category:String(x.category||"Other"),price:Number(x.price||0),
+      description:String(x.description||""),image:String(x.image||""),
+      available:x.available!==false,created_at:x.created_at||new Date().toISOString()
+    })).filter(x=>x.name&&Number.isFinite(x.price)&&x.price>0);
+    if(rows.length){
+      const {data:migrated,error:migrateError}=await db.from("restaurant_menu_items").upsert(rows,{onConflict:"id"}).select("id,business_id,name,category,price,description,image,available,created_at");
+      if(migrateError)throw migrateError;
+      const merged=new Map(items.map(x=>[String(x.id),x]));
+      (migrated||[]).forEach(x=>merged.set(String(x.id),x));
+      items=[...merged.values()];
     }
   }
+  if(items.length||!legacy.length){try{localStorage.removeItem(key)}catch{}}
   return items;
 }
 async function productsPage(){
@@ -388,7 +438,7 @@ async function renderPOS(){
       const img=p.menu_only?p.image:"";
       return `<button class="menuitem" data-add="${esc(p.id)}" style="text-align:left;min-width:130px;max-width:180px;padding:8px;white-space:normal"><span style="display:block;height:100px;margin-bottom:7px;border-radius:7px;overflow:hidden;background:var(--panel2);display:grid;place-items:center">${img?`<img src="${img}" alt="${esc(p.name)}" style="width:100%;height:100%;object-fit:cover">`:`<span class="muted" style="font-size:12px"> ${p.menu_only?"No picture":"Stock item"} </span>`}</span><strong style="display:block">${esc(p.name)}</strong><small style="display:block;margin-top:4px">${money(p.selling_price)}</small></button>`
     }).join("")||'<div class="empty">No menu items found. Add food or drinks in Menu first. Only restaurant menu items appear in POS.</div>';
-    $$("[data-add]").forEach(b=>b.onclick=()=>addToCart(b.dataset.add));
+    $$("[data-add]").forEach(b=>b.onclick=()=>addToCart(b.dataset.add,allItems));
   };
   $("menuSearch").oninput=paintMenu;$("categoryFilter").onchange=paintMenu;paintMenu();
   // Held orders are stored in Supabase so they survive browser cleanup and can be recalled on another device.
@@ -445,15 +495,16 @@ async function renderPOS(){
   $("clearCart").onclick=()=>{cart=[];paintCart()};$("discount").oninput=paintCart;$("payBtn").onclick=checkout;paintCart();
   loadHeldSales().catch(err=>say("saleMsg","Could not load cloud held orders: "+(err.message||err)+". Run the supplied SQL setup in Supabase first."));
 }
-function addToCart(id){
+function addToCart(id,menuItems=[]){
   const p=products.find(x=>String(x.id)===String(id));
   if(p){const existing=cart.find(x=>String(x.product_id)===String(id));if(existing)existing.quantity+=1;else cart.push({product_id:p.id,product_name:p.name,unit:p.unit,quantity:1,unit_price:Number(p.selling_price),cost_price:Number(p.cost_price),stock_quantity:Number(p.stock_quantity),menu_only:false});paintCart();return}
-  const menuKey=`wizo_menu_items_${business.id}`;
-  let items=[];try{items=JSON.parse(localStorage.getItem(menuKey)||"[]")}catch{}
-  const rawId=String(id).replace(/^menu_/,""),m=items.find(x=>String(x.id)===rawId);
+  // POS cards are populated from Supabase restaurant_menu_items. Use that same
+  // in-memory cloud result here instead of looking in legacy browser LocalStorage.
+  const rawId=String(id).replace(/^menu_/,"");
+  const m=menuItems.find(x=>String(x.id)===String(id))||menuItems.find(x=>String(x.id).replace(/^menu_/,"")===rawId);
   if(!m)return;
   const existing=cart.find(x=>x.menu_only&&String(x.menu_item_id)===rawId);
-  if(existing)existing.quantity+=1;else cart.push({product_id:null,menu_item_id:rawId,menu_only:true,product_name:m.name,unit:"item",quantity:1,unit_price:Number(m.price)||0,cost_price:0,stock_quantity:0});
+  if(existing)existing.quantity+=1;else cart.push({product_id:null,menu_item_id:rawId,menu_only:true,product_name:m.name,unit:"item",quantity:1,unit_price:Number(m.selling_price??m.price)||0,cost_price:0,stock_quantity:0});
   paintCart();
 }
 function paintCart(){if(!$("cartItems"))return;$("cartItems").innerHTML=cart.map((x,i)=>`<div class="cartrow"><div>${esc(x.product_name)}<br><small class="muted">${money(x.unit_price)} / ${esc(x.unit)}</small></div><button data-dec="${i}">−</button><b>${x.quantity}</b><button data-inc="${i}">+</button><button class="danger" data-remove="${i}">×</button></div>`).join("")||'<div class="empty">Order is empty.</div>';$$("[data-inc]").forEach(b=>b.onclick=()=>{cart[+b.dataset.inc].quantity+=1;paintCart()});$$("[data-dec]").forEach(b=>b.onclick=()=>{const i=+b.dataset.dec;cart[i].quantity-=1;if(cart[i].quantity<=0)cart.splice(i,1);paintCart()});$$("[data-remove]").forEach(b=>b.onclick=()=>{cart.splice(+b.dataset.remove,1);paintCart()});const sub=cart.reduce((a,x)=>a+x.quantity*x.unit_price,0),disc=Math.max(0,Number($("discount")?.value||0));$("subtotal").textContent=money(sub);$("cartTotal").textContent=money(Math.max(0,sub-disc))}
@@ -769,10 +820,24 @@ async function budgetPage(){
  const localKey=`wizo_budget_${business.id}`,localHistoryKey=`wizo_budget_history_${business.id}`;
  let {data:budgetRow,error}=await db.from("wizo_budgets").select("business_id,amount,updated_at,updated_by").eq("business_id",business.id).maybeSingle();if(error)throw error;
  let {data:history,error:histErr}=await db.from("wizo_budget_history").select("id,business_id,previous_amount,amount,created_at,created_by,budget_name,notes,budget_date").eq("business_id",business.id).order("created_at",{ascending:false});if(histErr)throw histErr;history=history||[];
- // Migrate browser history only if cloud history is empty; preserve existing browser values.
- if(!history.length){let oldHistory=[];try{oldHistory=JSON.parse(localStorage.getItem(localHistoryKey)||"[]")}catch{};if(Array.isArray(oldHistory)&&oldHistory.length){const rows=oldHistory.slice(0,100).map(h=>({business_id:business.id,previous_amount:Math.max(0,Number(h.previous)||0),amount:Math.max(0,Number(h.amount)||0),created_at:h.date||new Date().toISOString(),created_by:currentUser.id,budget_name:String(h.name||"Budget"),notes:String(h.notes||""),budget_date:h.dateOnly||null}));const result=await db.from("wizo_budget_history").insert(rows).select("id,business_id,previous_amount,amount,created_at,created_by,budget_name,notes,budget_date");if(result.error)throw result.error;history=(result.data||[]).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));}}
+ // One-time migration of older browser-only budget history into Supabase.
+ let oldHistory=[];try{oldHistory=JSON.parse(localStorage.getItem(localHistoryKey)||"[]")}catch{}
+ if(Array.isArray(oldHistory)&&oldHistory.length){
+   const rows=oldHistory.slice(0,100).map(h=>({business_id:business.id,previous_amount:Math.max(0,Number(h.previous)||0),amount:Math.max(0,Number(h.amount)||0),created_at:h.date||new Date().toISOString(),created_by:currentUser.id,budget_name:String(h.name||"Budget"),notes:String(h.notes||""),budget_date:h.dateOnly||null}));
+   const result=await db.from("wizo_budget_history").insert(rows).select("id,business_id,previous_amount,amount,created_at,created_by,budget_name,notes,budget_date");
+   if(result.error)throw result.error;
+   history=[...(result.data||[]),...history].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+ }
  let budgetAmount=Math.max(0,Number(budgetRow?.amount||0));
- if(!budgetRow){const oldAmount=Math.max(0,Number(localStorage.getItem(localKey)||0));if(oldAmount>0){const result=await db.from("wizo_budgets").upsert({business_id:business.id,amount:oldAmount,updated_by:currentUser.id},{onConflict:"business_id"}).select("business_id,amount,updated_at,updated_by").single();if(result.error)throw result.error;budgetRow=result.data;budgetAmount=oldAmount;}}
+ let oldBudgetAmount=Math.max(0,Number(localStorage.getItem(localKey)||0));
+ if(!budgetRow&&oldBudgetAmount>0){
+   const result=await db.from("wizo_budgets").upsert({business_id:business.id,amount:oldBudgetAmount,updated_by:currentUser.id},{onConflict:"business_id"}).select("business_id,amount,updated_at,updated_by").single();
+   if(result.error)throw result.error;
+   budgetRow=result.data;budgetAmount=oldBudgetAmount;
+ }
+ // Cloud now owns these values; remove only legacy copies whose migration is complete.
+ if(budgetRow||oldBudgetAmount===0){try{localStorage.removeItem(localKey)}catch{}}
+ if(history.length||!oldHistory.length){try{localStorage.removeItem(localHistoryKey)}catch{}}
  let balance=budgetAmount-purchaseTotal-nonPurchaseExpenses;
  const drawStats=()=>{balance=budgetAmount-purchaseTotal-nonPurchaseExpenses;const stats=$("content").querySelectorAll(".stats .stat strong");if(stats[0])stats[0].textContent=money(budgetAmount);if(stats[2]){stats[2].textContent=money(balance);stats[2].style.color=balance<0?"var(--red)":"var(--lime)"}const pct=budgetAmount>0?Math.min(100,purchaseTotal/budgetAmount*100):0;if($("budgetBar"))$("budgetBar").style.width=pct+"%";if($("budgetProgress"))$("budgetProgress").textContent=budgetAmount>0?`${pct.toFixed(1)}% of budget used · Balance: ${money(balance)}`:"Enter a budget amount to calculate the balance."};
  $("content").innerHTML=`<div class="stats"><div class="stat"><small>BUDGET</small><strong>${money(budgetAmount)}</strong></div><div class="stat"><small>PURCHASES</small><strong>${money(purchaseTotal)}</strong></div><div class="stat"><small>BALANCE (BUDGET − PURCHASES − EXPENSES)</small><strong style="color:${balance<0?'var(--red)':'var(--lime)'}">${money(balance)}</strong></div><div class="stat"><small>SALES REVENUE</small><strong>${money(revenue)}</strong></div></div><div class="panel"><h3>Budget planning</h3><p class="muted">Budget and history are saved to Supabase Cloud. Balance subtracts purchase costs and expenses, excluding direct-purchase expenses already counted in Purchase Cost.</p><form id="budgetForm"><div class="formgrid"><div><label>Budget name *</label><input id="budgetName" name="budget_name" maxlength="120" placeholder="e.g. Monthly stock budget" required></div><div><label>Budget amount to add (${esc(profile.currency||"ETB")}) *</label><input id="budgetTarget" name="amount" type="number" min="0.01" step="0.01" placeholder="Enter amount to add" required></div><div><label>Budget date *</label><input id="budgetDate" name="date" type="date" required value="${today()}"></div><div style="grid-column:1/-1"><label>Description / Notes</label><textarea id="budgetNotes" name="notes" maxlength="500" rows="2" placeholder="Optional details about this budget"></textarea></div></div><p class="muted">Current budget: <strong>${money(budgetAmount)}</strong>. The amount entered will be added to the current budget.</p><button class="primary" type="submit" style="margin-top:12px">＋ Add budget</button><span id="budgetMsg" class="msg"></span></form><div style="margin-top:18px"><p>Budget usage</p><div style="height:12px;background:#d1fae5;border-radius:8px;overflow:hidden"><div id="budgetBar" style="height:100%;width:0;background:var(--gold)"></div></div><p id="budgetProgress" class="muted" style="margin-top:8px"></p><button type="button" id="budgetDashboard" style="margin-top:8px">View Dashboard</button></div></div><div class="panel"><h3>Budget History</h3><p class="muted">History is saved in Supabase Cloud and follows this business account.</p><div id="budgetHistoryEditor" class="panel hidden" style="margin-bottom:14px;background:var(--panel2)"></div><div id="budgetHistory"></div></div>`;
@@ -908,10 +973,7 @@ backupData.onclick=async()=>{
    if(error&&error.code!=="42P01")throw new Error(table+": "+error.message);
    backup.data[table]=data||[];
   }
-  // Keep old browser menu/budget records in the export for recoverability during migration.
-  for(const key of [`wizo_menu_items_${business.id}`,`wizo_budget_${business.id}`,`wizo_budget_history_${business.id}`]){
-   try{backup.local_data=backup.local_data||{};backup.local_data[key]=localStorage.getItem(key)}catch{}
-  }
+  // Business records are backed up from Supabase only; legacy browser caches are not active storage.
   const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");
   a.href=url;a.download="WIZO_OMEGA_POS_full_backup_"+new Date().toISOString().slice(0,10)+".json";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   say("dataToolsMsg","Full backup downloaded. It includes parent and child records, cloud menu and budget history.");
@@ -936,13 +998,7 @@ $("restoreDataBtn").onclick=async()=>{
    if(error&&error.code==="42P01")continue;
    if(error)throw new Error(table+": "+error.message);
   }
-  // Restore old local-only values only when they are included in this backup.
-  if(backup.local_data&&typeof backup.local_data==="object"){
-   for(const [key,value] of Object.entries(backup.local_data)){
-    if(!key.endsWith("_"+business.id))continue;
-    if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,String(value));
-   }
-  }
+  // All business data is restored to Supabase tables; browser storage is not used.
   say("dataToolsMsg","Restore completed. Refresh the app to reload restored data.");
  }catch(err){say("dataToolsMsg","Restore failed: "+(err.message||err)+". Some earlier batches may already have restored; this operation is not atomic.")}
  finally{btn.disabled=false}
@@ -960,12 +1016,10 @@ $("deleteDataBtn").onclick=async()=>{
     }
     // Remove this business's cloud budget/history only after the owner confirms Delete Data.
     for(const table of ["wizo_budget_history","wizo_budgets"]){const {error}=await db.from(table).delete().eq("business_id",business.id);if(error)throw new Error(table+": "+error.message)}
-    // Menu remains browser-local; clear the old local budget copies after cloud deletion succeeds.
-    localStorage.removeItem(`wizo_menu_items_${business.id}`);
-    localStorage.removeItem(`wizo_budget_${business.id}`);
-    localStorage.removeItem(`wizo_budget_history_${business.id}`);
+    // Remove only obsolete legacy caches from this device after cloud deletion succeeds.
+    for(const key of [`wizo_menu_items_${business.id}`,`wizo_budget_${business.id}`,`wizo_budget_history_${business.id}`]){try{localStorage.removeItem(key)}catch{}}
     $("deleteDataConfirm").value="";
-    say("deleteDataMsg","Finished. Sales and sale items, purchases and purchase items, expenses, employees, products/menu, customers, suppliers and budget are cleared for this business. Business name, settings and login account remain. Local menu data on other devices is not affected. Refresh the page to see the clean state.");
+    say("deleteDataMsg","Finished. Sales and sale items, purchases and purchase items, expenses, employees, products/menu, customers, suppliers and budget are cleared for this business. Business name, settings and login account remain. Legacy browser cache on this device was cleared. Refresh the page to see the clean state.");
   }catch(err){say("deleteDataMsg","Delete stopped part-way through: "+(err.message||err)+". Some records may already have been deleted; check the data before retrying.")}
   finally{btn.disabled=false}
 };
